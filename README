@@ -1,0 +1,6 @@
+This is a simple, evolving simultaneous localization and mapping program.
+This project is currently being developed using Python 3.x in Ubuntu 18.04 operating system.
+
+
+Current Updates:
+Making use of opencv and sdl2 python libraries. Display class houses the sdl2 frame display method
