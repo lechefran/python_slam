@@ -3,5 +3,10 @@ This project is currently being developed using Python 3.x in Ubuntu 18.04 opera
 
 
 Current Updates:
+7/31/2019
+Added initial basic feature extracting features to the program. Image fram is used to slice image into 
+separate grids and check for features to track.
+
+7/31/2019
 Making use of opencv and sdl2 python libraries. Display class houses the sdl2 frame display method.
 Note that the repository will not include a .mp4 video file to work with. Please provide your own video file.
