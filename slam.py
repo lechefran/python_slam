@@ -2,6 +2,7 @@
 
 import cv2
 import time
+import numpy as np
 from display import Display
 from fextractor import FeatureExtractor
 
@@ -14,6 +15,7 @@ feature_extractor = FeatureExtractor()
 
 def process_frame(img):
     img = cv2.resize(img, (W, H))
+<<<<<<< HEAD
     matches = feature_extractor.extract(img)
     if matches is None:
         return 
@@ -24,6 +26,12 @@ def process_frame(img):
         # u,v = map(lambda x: int(round(x)), p[0])
         cv2.circle(img, (u1, v1), color = (0, 255, 0), radius = 2)
         cv2.line(img, (u1, v2), (u2, v2), color = (255, 0, 0))
+=======
+    kps = feature_extractor.extract(img)
+    for p in kps:
+        u, v = map(lambda x: int(round(x)), p.pt)
+        cv2.circle(img, (u, v), color = (0, 255, 0), radius = 2)
+>>>>>>> 9148e1bd7e6fdce8774f44e3910a5622910c51b5
 
     # cv2.imshow('image', img)
     disp.paint(img)
