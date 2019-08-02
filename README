@@ -3,6 +3,11 @@ This project is currently being developed using Python 3.x in Ubuntu 18.04 opera
 
 
 Current Updates:
+8/2/2019
+Improved image feature extraction of the program using built in opencv methods, making for cleaner, better
+performing feature extracting. Also modified and did general code cleanup to improve overall readability
+with additional frame information printing.
+
 7/31/2019
 Added initial basic feature extracting features to the program. Image frame is used to slice image into 
 separate grids and check for features to track.
