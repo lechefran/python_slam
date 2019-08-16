@@ -2,9 +2,11 @@ This is a simple, evolving simultaneous localization and mapping program.
 This project is currently being developed using Python 3.x on Ubuntu 18.04 operating system.
 
 **How to run the program**
+
 After cloning this repository, run the program using *./slam.py* or *python3 slam.py*
 
 **Current Updates:**
+
 8/15/19
 Inclusion of rotation and transformation matrix information to the program
 
