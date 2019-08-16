@@ -1,12 +1,28 @@
+##What is this project repository about?  
 This is a simple, evolving simultaneous localization and mapping program.
 This project is currently being developed using Python 3.x on Ubuntu 18.04 operating system. The program is currently in the feature and 
 infromation extraction stage with map construction as a future goal of the project.
 
-**How to run the program**  
+##How to run the program  
 After cloning this repository, run the program using *./slam.py* or *python3 slam.py*
 
-**Current Updates:**  
+##Prerequisites  
+This program is being written in Python3 and uses multiple libraries that have to be installed by the user separately.  
+Here is a list of the current fundamental Python libaries necessary to the project:  
 
+**OpenCV**  
+OpenCV is a libaray that contains numerous computer vision algorithms. Check them out at [OpenCV](https://docs.opencv.org/3.4/d1/dfb/intro.html).  
+To install, use the command `pip3 install opencv-python`.
+
+**PySDL2**  
+PySDL2 is a Python wrapper for the SDL2 library. Check them out at [PySDL2](https://pysdl2.readthedocs.io/en/rel_0_9_6/index.html).  
+To install, use the command `sudo apt install libsdl2-2.0`.
+
+**Scikit-image**
+Scikit-image (skimage) is a collection of image processing algorithms. Check them out at [Scikit-image](https://scikit-image.org/).  
+To install, use the command `pip3 install scikit-image`.
+
+##Current Updates:  
 8/15/19  
 Inclusion of rotation and transformation matrix information to the program
 
