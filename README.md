@@ -1,12 +1,12 @@
-##What is this project repository about?  
+## What is this project repository about?  
 This is a simple, evolving simultaneous localization and mapping program.
 This project is currently being developed using Python 3.x on Ubuntu 18.04 operating system. The program is currently in the feature and 
 infromation extraction stage with map construction as a future goal of the project.
 
-##How to run the program  
+## How to run the program  
 After cloning this repository, run the program using *./slam.py* or *python3 slam.py*
 
-##Prerequisites  
+## Prerequisites  
 This program is being written in Python3 and uses multiple libraries that have to be installed by the user separately.  
 Here is a list of the current fundamental Python libaries necessary to the project:  
 
