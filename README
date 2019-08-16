@@ -1,8 +1,19 @@
 This is a simple, evolving simultaneous localization and mapping program.
-This project is currently being developed using Python 3.x in Ubuntu 18.04 operating system.
+This project is currently being developed using Python 3.x on Ubuntu 18.04 operating system.
 
+**How to run the program**
+After cloning this repository, run the program using *./slam.py* or *python3 slam.py*
 
-Current Updates:
+**Current Updates:**
+8/15/19
+Inclusion of rotation and transformation matrix information to the program
+
+8/7/2019
+Program has improved coordinate usage using normalization and denormalization methods. Camera viewpoint is now 
+calibrated, allowing for usage of essential matrix transformation over fundamental matrix transformation. Also
+fixed the bad interpreter issue. Users are now allowed to run the program using *./slam.py* in coexistence with
+the usual *python3 slam.py*.
+
 8/2/2019
 Improved image feature extraction of the program using built in opencv methods, making for cleaner, better
 performing feature extracting. Also modified and did general code cleanup to improve overall readability
