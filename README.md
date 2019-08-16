@@ -22,7 +22,7 @@ To install, use the command `sudo apt install libsdl2-2.0`.
 Scikit-image (skimage) is a collection of image processing algorithms. Check them out at [Scikit-image](https://scikit-image.org/).  
 To install, use the command `pip3 install scikit-image`.
 
-## Current Updates:  
+## Current Updates  
 8/15/19  
 Inclusion of rotation and transformation matrix information to the program
 
