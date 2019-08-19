@@ -11,7 +11,7 @@ This program is being written in Python3 and uses multiple libraries that have t
 Here is a list of the current fundamental Python libaries necessary to the project:  
 
 **OpenCV**  
-OpenCV is a libaray that contains numerous computer vision algorithms. Check them out at [OpenCV](https://docs.opencv.org/3.4/d1/dfb/intro.html).  
+OpenCV is a library that contains numerous computer vision algorithms. Check them out at [OpenCV](https://docs.opencv.org/3.4/d1/dfb/intro.html).  
 To install, use the command `pip3 install opencv-python`.
 
 **PySDL2**  
