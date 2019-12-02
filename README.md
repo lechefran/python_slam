@@ -1,7 +1,7 @@
 ## What is this project repository about?  
 This is a simple, evolving simultaneous localization and mapping program.
-This project is currently being developed using Python 3.x on Ubuntu 18.04 operating system. The program is currently in the feature and 
-infromation extraction stage with map construction as a future goal of the project.
+This project is currently being developed using Python 3.x on Ubuntu 18.04 operating system. The program is currently in the feature and
+information extraction stage with map construction as a future goal of the project.
 
 ## How to run the program  
 After cloning this repository, run the program using *./slam.py* or *python3 slam.py*
@@ -27,7 +27,7 @@ To install, use the command `pip3 install scikit-image`.
 Inclusion of rotation and transformation matrix information to the program
 
 8/7/2019  
-Program has improved coordinate usage using normalization and denormalization methods. Camera viewpoint is now 
+Program has improved coordinate usage using normalization and denormalization methods. Camera viewpoint is now
 calibrated, allowing for usage of essential matrix transformation over fundamental matrix transformation. Also
 fixed the bad interpreter issue. Users are now allowed to run the program using *./slam.py* in coexistence with
 the usual *python3 slam.py*.
@@ -38,7 +38,7 @@ performing feature extracting. Also modified and did general code cleanup to imp
 with additional frame information printing.
 
 7/31/2019  
-Added initial basic feature extracting features to the program. Image frame is used to slice image into 
+Added initial basic feature extracting features to the program. Image frame is used to slice image into
 separate grids and check for features to track.
 
 7/31/2019  
