@@ -6,7 +6,7 @@ information extraction stage with map construction as a future goal of the proje
 ## How to run the program  
 After cloning this repository, run the program using *./slam.py* or *python3 slam.py*
 
-## Prerequisites  
+## Required Libraries
 This program is being written in Python3 and uses multiple libraries that have to be installed by the user separately.  
 Here is a list of the current fundamental Python libaries necessary to the project:  
 
@@ -21,6 +21,24 @@ To install, use the command `sudo apt install libsdl2-2.0`.
 **Scikit-image**
 Scikit-image (skimage) is a collection of image processing algorithms. Check them out at [Scikit-image](https://scikit-image.org/).  
 To install, use the command `pip3 install scikit-image`.
+
+## Additional Requirements
+Here is a list of additional requirements that are used for this project:
+
+**g2opy**
+This is a python binding of graph optimization C++ g2o. Check them out at [g2opy](https://github.com/uoip/g2opy).
+You can follow the installation steps using the provided link. Note that there may be problems that occur when following the installation process
+provided. In this repository's case, there was a need to modify the common.h file inside pybind11 where include statements such as *#include <Python.h>*
+had to be changed to *#include <python3.6/Python.h>* to work. Another change that had to be made was the inclusion of the *PYTHONPATH* of g2opy in
+the *~/.bashrc* file of the main directory to include g2opy for the program to work. This can be fixed by modifying the *~/.bashrc* file and adding the
+statement *export PYTHONPATH=$PYTHONPATH:path/to/g2opy*.
+
+**Pangolin**
+Pangolin is a lightweight portable rapid development library for managing OpenGL display / interaction and abstracting video input.
+Check them out at [Pangolin](https://github.com/stevenlovegrove/Pangolin). Installation instructions are included in the repository link.
+
+It is recommended that you place all these additional repositories in a separate directory to keep you repository clean. Build all of the
+additional repositories in that separate directory.
 
 ## Current Updates  
 8/15/19  

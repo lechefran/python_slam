@@ -5,6 +5,7 @@ import time
 import numpy as np
 from display import Display
 from fextractor import FeatureExtractor
+import g2o
 
 W = 1920 // 2
 H = 1080 // 2
@@ -34,7 +35,7 @@ def process_frame(img):
         u2, v2 = feature_extractor.denormalize(p2, img)
 
         cv2.circle(img, (u1, v1), color = (0, 255, 0), radius = 2)
-        cv2.line(img, (u1, v2), (u2, v2), color = (255, 0, 0))
+        cv2.line(img, (u1, v2), (u2, v2), color = (255, 0, 255))
 
     # cv2.imshow('image', img)
     disp.paint(img)
