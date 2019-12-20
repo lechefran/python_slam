@@ -41,6 +41,10 @@ It is recommended that you place all these additional repositories in a separate
 additional repositories in that separate directory.
 
 ## Current Updates  
+12/20/19
+General code cleanup especially in frame.py. Added major changes to extraction method: now based
+on image frames versus having an extractor object do all of the work.
+
 8/15/19  
 Inclusion of rotation and transformation matrix information to the program
 

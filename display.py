@@ -1,8 +1,7 @@
-#!/usr/bin/env python3
-
 import sdl2.ext
 import sdl2
 
+# class for the Display window
 class Display(object):
     # class constructor
     def __init__(self, window_name, W, H):
@@ -12,7 +11,7 @@ class Display(object):
         self.window.show()
 
     def paint(self, img):
-        # pretty much junk at this point 
+        # pretty much junk at this point
         events = sdl2.ext.get_events()
         for event in events:
             if event.type == sdl2.SDL_QUIT:

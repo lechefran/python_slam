@@ -4,43 +4,36 @@ import cv2
 import time
 import numpy as np
 from display import Display
-from fextractor import FeatureExtractor
-import g2o
-
-W = 1920 // 2
-H = 1080 // 2
+from frame import Frame, denormalize, match
+import g2o # requires user to install additional requirements from readme
 
 # intrinsic matrix
-F = 200
+W, H, F = 1920 // 2, 1080 // 2, 270
 K = np.array([[F, 0, W // 2], [0, F, H // 2], [0, 0, 1]])
 
 # display and extractor objects
 disp = Display("Display Window", W, H)
-feature_extractor = FeatureExtractor(K)
+frames = []
 
+# function to process the image frame from the video: track and draw on
+# obtained features and display back including matches
 def process_frame(img):
     img = cv2.resize(img, (W, H))
-    matches, pose = feature_extractor.extract(img)
-    if matches is None:
+    frame = Frame(img, K)
+    frames.append(frame)
+
+    if len(frames) <= 1: # make sure images actually exist
         return
 
-    if pose is None:
-        return
+    ret_val, rt = match(frames[-1], frames[-2])
 
-    for p1, p2 in matches:
-        # u1, v1 = map(lambda x: int(round(x)), p1)
-        # u2, v2 = map(lambda x: int(round(x)),p2)
-        # u,v = map(lambda x: int(round(x)), p[0])
-        u1, v1 = feature_extractor.denormalize(p1, img)
-        u2, v2 = feature_extractor.denormalize(p2, img)
+    for pt1, pt2 in ret_val:
+        u1, u2 = denormalize(K, pt1)
+        v1, v2 = denormalize(K, pt2)
+        cv2.circle(img, (u1, u2), color = (0, 255, 0), radius = 1)
+        cv2.line(img, (u1, u2), (v1, v2), color = (255, 0, 255))
 
-        cv2.circle(img, (u1, v1), color = (0, 255, 0), radius = 2)
-        cv2.line(img, (u1, v2), (u2, v2), color = (255, 0, 255))
-
-    # cv2.imshow('image', img)
     disp.paint(img)
-    # print(img)
-    print(f"{len(matches)} matches") # print the number of matches
 
 def main():
     video = cv2.VideoCapture("video 1.mp4") # read in a mp4 file called video 1
