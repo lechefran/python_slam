@@ -31,11 +31,14 @@ You can follow the installation steps using the provided link. Note that there m
 provided. In this repository's case, there was a need to modify the common.h file inside pybind11 where include statements such as *#include <Python.h>*
 had to be changed to *#include <python3.6/Python.h>* to work. Another change that had to be made was the inclusion of the *PYTHONPATH* of g2opy in
 the *~/.bashrc* file of the main directory to include g2opy for the program to work. This can be fixed by modifying the *~/.bashrc* file and adding the
-statement *export PYTHONPATH=$PYTHONPATH:path/to/g2opy*.
+statement *export PYTHONPATH=$PYTHONPATH:path/to/g2opy*. Do not forget to run *source ~/.bashrc* afterward to update current path.
 
 **Pangolin**
 Pangolin is a lightweight portable rapid development library for managing OpenGL display / interaction and abstracting video input.
-Check them out at [Pangolin](https://github.com/stevenlovegrove/Pangolin). Installation instructions are included in the repository link.
+Check them out at [Pangolin](https://github.com/stevenlovegrove/Pangolin). Installation instructions are included in the repository link. As with g2opy, 
+there were some modifications that had to be applied to the make process to get this to work. include statements such as *#include <Python.h>* found in 
+common.h has to also be replaced with *#include <python3.6/Python.h>*. It is also required to add the path to pangolin to the bashrc file and source it
+to update the current file path.
 
 It is recommended that you place all these additional repositories in a separate directory to keep you repository clean. Build all of the
 additional repositories in that separate directory.

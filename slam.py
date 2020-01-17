@@ -6,6 +6,7 @@ import numpy as np
 from display import Display
 from frame import Frame, denormalize, match
 import g2o # requires user to install additional requirements from readme
+import pangolin # also requires user to install additional requirements from readme
 
 # intrinsic matrix
 W, H, F = 1920 // 2, 1080 // 2, 270
