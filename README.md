@@ -40,6 +40,9 @@ Check them out at [Pangolin](https://github.com/stevenlovegrove/Pangolin). Insta
 It is recommended that you place all these additional repositories in a separate directory to keep you repository clean. Build all of the
 additional repositories in that separate directory.
 
+## Current Issues  
+Building the additional required libraries may lead to a problem encounter with pybind11. Currently working on a solution that will be posted when resolved.
+
 ## Current Updates  
 12/20/19
 General code cleanup especially in frame.py. Added major changes to extraction method: now based
