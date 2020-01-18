@@ -44,7 +44,9 @@ It is recommended that you place all these additional repositories in a separate
 additional repositories in that separate directory.
 
 ## Current Issues  
-Building the additional required libraries may lead to a problem encounter with pybind11. Currently working on a solution that will be posted when resolved.
+There may be multiple instances where building runs into errors such as not being able to find Python.h. A recommended fix for this is the use of 
+*export CPLUS_INCLUDE_PATH=/path/to/python2.7* to fix the problem.
+
 
 ## Current Updates  
 12/20/19
