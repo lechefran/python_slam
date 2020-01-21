@@ -6,7 +6,7 @@ import numpy as np
 from display import Display
 from frame import Frame, denormalize, match
 import g2o # requires user to install additional requirements from readme
-# import pangolin # also requires user to install additional requirements from readme
+import sys
 
 # intrinsic matrix
 W, H, F = 1920 // 2, 1080 // 2, 270
@@ -37,7 +37,12 @@ def process_frame(img):
     disp.paint(img)
 
 def main():
-    video = cv2.VideoCapture("video 1.mp4") # read in a mp4 file called video 1
+    # check that user has provided video as program parameter
+    if len(sys.argv) < 2:
+        print("Error: Please provide a video file as a parameter\nexit(-1)")
+        exit(-1)
+
+    video = cv2.VideoCapture(sys.argv[1]) # read in a mp4 file
     if video.isOpened() == False:
         print("Error, video file could not be loaded")
 
