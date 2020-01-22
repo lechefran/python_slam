@@ -1,8 +1,8 @@
 import sdl2.ext
 import sdl2
 
-# class for the Display window
-class Display(object):
+# class for the 2D Display window
+class Display2D(object):
     # class constructor
     def __init__(self, window_name, W, H):
         sdl2.ext.init()
@@ -20,3 +20,7 @@ class Display(object):
         surf = sdl2.ext.pixels3d(self.window.get_surface())
         surf[:, :, 0:3] = img.swapaxes(0, 1)
         self.window.refresh()
+
+# TODO: class for the 3D Display window
+class Display(object):
+    pass

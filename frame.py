@@ -5,6 +5,8 @@ from skimage.transform import EssentialMatrixTransform
 from skimage.transform import FundamentalMatrixTransform
 np.set_printoptions(suppress = True)
 
+irt = np.eye(4)
+
 # transform [[x, y]] to [[x, y, 1]]
 def transform_with_one(x):
     return np.concatenate([x, np.ones((x.shape[0], 1))], axis = 1)
@@ -21,34 +23,43 @@ def extract(img):
 # function to do point matching between current and past frames
 def match(frame1, frame2):
     # do point matching
-    ret_val = []
+    ret_val, idx1, idx2 = [], [], [] # return values, index 1, index 2
     bf = cv2.BFMatcher(cv2.NORM_HAMMING)
     matches = bf.knnMatch(frame1.des, frame2.des, k = 2)
 
     # perform Lowe's Ratio test
     for m, n in matches:
         if m.distance < 0.75 * n.distance:
+            # append to frame points
             k1 = frame1.pts[m.queryIdx]
             k2 = frame2.pts[m.trainIdx]
             ret_val.append((k1, k2))
 
+            # append to indices 
+            idx1.append(m.queryIdx)
+            idx2.append(m.trainIdx)
+
     assert len(ret_val) >= 8
     ret_val = np.array(ret_val)
+    idx1 = np.array(idx1)
+    idx2 = np.array(idx2)
 
     # perform matrix fitting
     model, inliers = ransac((ret_val[:, 0], ret_val[:, 1]), EssentialMatrixTransform,
                             min_samples = 8, residual_threshold = 0.005, max_trials = 200)
     # print(sum(inliers), len(inliers))
-    ret_val = ret_val[inliers]
+    # ret_val = ret_val[inliers] # ignore all outliers
     rt = extractRT(model.params, False) # set false; no need to see match values
-    return ret_val, rt # return values
+    return idx1[inliers], idx2[inliers], rt # return values
 
+# function to denormalize a set of point values 
 def denormalize(k, pt):
     # print(self.kinv)
     ret_val = np.dot(k, np.array([pt[0], pt[1], 1.0]))
     ret_val /= ret_val[2]
     return int(round(ret_val[0])), int(round(ret_val[1]))
 
+# function to normalize a set of point values 
 def normalize(kinv, pts):
     return np.dot(kinv, transform_with_one(pts).T).T[:, 0:2]
 
@@ -63,7 +74,10 @@ def extractRT(parameters, show_RT_values):
     if np.sum(R.diagonal()) < 0:
         R = np.dot(np.dot(s, d.T), d)
     t = s[:, 2]
-    RT = np.concatenate([R, t.reshape(3, 1)], axis = 1)
+    # RT = np.concatenate([R, t.reshape(3, 1)], axis = 1)
+    RT = np.eye(4)
+    RT[:3, :3]  = R
+    RT[:3, 3] = t
 
     # see if user wants to show the RT values
     if (show_RT_values == True):
@@ -78,3 +92,4 @@ class Frame(object):
         self.kinv = np.linalg.inv(self.k)
         pts, self.des = extract(img)
         self.pts = normalize(self.kinv, pts)
+        self.pose = irt

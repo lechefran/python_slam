@@ -1,10 +1,13 @@
-## What is this project repository about?  
+## Python SLAM    
 This is a simple, evolving simultaneous localization and mapping program.
 This project is currently being developed using Python 3.x on Ubuntu 18.04 operating system. The program is currently in the feature and
 information extraction stage with map construction as a future goal of the project.
 
-## How to run the program  
-After cloning this repository, run the program using *./slam.py* or *python3 slam.py*
+## Program Usage  
+After cloning this repository, run the program using 
+```
+*./slam.py video_name_here* or *python3 slam.py video_name_here*
+```
 
 ## Required Libraries
 This program is being written in Python3 and uses multiple libraries that have to be installed by the user separately.  
@@ -30,8 +33,8 @@ This is a python binding of graph optimization C++ g2o. Check them out at [g2opy
 You can follow the installation steps using the provided link. Note that there may be problems that occur when following the installation process
 provided. In this repository's case, there was a need to modify the common.h file inside pybind11 where include statements such as *#include <Python.h>*
 had to be changed to *#include <python3.6/Python.h>* to work. Another change that had to be made was the inclusion of the *PYTHONPATH* of g2opy in
-the *~/.bashrc* file of the main directory to include g2opy for the program to work. This can be fixed by modifying the *~/.bashrc* file and adding the
-statement *export PYTHONPATH=$PYTHONPATH:path/to/g2opy*. Do not forget to run *source ~/.bashrc* afterward to update current path.
+the *~/.bashrc* file of the main directory to include g2opy for the program to work. This can be fixed by import the system-specific parameters and 
+functions library using *import sys* and appending the directory path of g2o to the program.
 
 **Pygame**  
 Pygame is a free open source library for making multimedia applciations that are built on top for the SDL library. It is highly portable and runs on
@@ -46,6 +49,11 @@ There are currently some issues with the building of additional software to aid 
 to search for similar performing alternatives to get this program to work.
 
 ## Current Updates  
+1/22/20  
+Successfully built both g2opy and pangolin python bindings. Program refactoring now stores point indices.
+Indices are not stored and program now makes use of points as objects. Initial version of the 3D map 
+display for the program coming soon.
+
 12/20/19
 General code cleanup especially in frame.py. Added major changes to extraction method: now based
 on image frames versus having an extractor object do all of the work.
