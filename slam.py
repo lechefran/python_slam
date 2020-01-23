@@ -22,7 +22,7 @@ W, H, F = 1920//2, 1080//2, 270
 K = np.array([[F, 0, W//2], [0, F, H//2], [0, 0, 1]])
 
 # display and extractor objects
-# disp = Display2D("Display Window", W, H)
+disp = Display2D("Display Window", W, H)
 
 # class for the Map object 
 class Map(object):
@@ -83,13 +83,10 @@ class Map(object):
         for frame in self.frames:
             poses.append(frame.pose)
 
-        # print("onto the next one")
-        # if not self.points:
-            # print("Nononon")
         # include map points int pts list
         for p in self.points:
-            # print("hello, before hello")
             pts.append(p.point)
+
         self.queue.put((np.array(poses), np.array(pts)))
 
 map3d = Map() # map object
@@ -150,16 +147,23 @@ def process_frame(img):
         cv2.circle(img, (u1, u2), color = (0, 255, 0), radius = 2)
         cv2.line(img, (u1, u2), (v1, v2), color = (255, 0, 255))
 
-    # disp.paint(img) # 2D display
+    disp.paint(img) # 2D display
     map3d.display() # 3D display
 
 def main():
+    debug_parameter = False # check if there was a debug system parameter
+
     # check that user has provided video as program parameter
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 3:
         print("Error: Please provide a video file as a parameter\nexit(-1)")
         exit(-1)
+   
+    if sys.argv[1] == "-t":
+        sys.argv[1] = True
+    elif sys.argv[1] == "-f":
+        sys.argv[1] = False
 
-    video = cv2.VideoCapture(sys.argv[1]) # read in a mp4 file
+    video = cv2.VideoCapture(sys.argv[2]) # read in a mp4 file
     if video.isOpened() == False:
         print("Error, video file could not be loaded")
 
