@@ -14,29 +14,101 @@ from display import Display2D
 from frame import Frame, denormalize, match, irt
 import g2o # requires user to install additional requirements from readme
 import pangolin
+import OpenGL.GL as gl
+from multiprocessing import Process, Queue
 
 # intrinsic matrix
-W, H, F = 1920 // 2, 1080 // 2, 270
-K = np.array([[F, 0, W // 2], [0, F, H // 2], [0, 0, 1]])
+W, H, F = 1920//2, 1080//2, 270
+K = np.array([[F, 0, W//2], [0, F, H//2], [0, 0, 1]])
 
 # display and extractor objects
-disp = Display2D("Display Window", W, H)
-frames = []
+# disp = Display2D("Display Window", W, H)
+
+# class for the Map object 
+class Map(object):
+    def __init__(self):
+        self.frames = []
+        self.points = []
+        self.state = None
+        self.queue = Queue()
+
+        process = Process(target = self.viewer_thread, args = (self.queue,))
+        process.daemon = True
+        process.start()
+
+    # Map display thread: keep updating display while queue is not empty
+    def viewer_thread(self, queue):
+        self.viewer_init(1024, 768)
+        while 1:
+            self.viewer_refresh(queue)
+
+    # class method to initialize map viewer 
+    def viewer_init(self, W, H):
+        pangolin.CreateWindowAndBind('Map View', 640, 480)
+        gl.glEnable(gl.GL_DEPTH_TEST)
+
+        self.scam = pangolin.OpenGlRenderState(
+                pangolin.ProjectionMatrix(W, H, 420, 420, W//2, H//2, 0.2, 1000),
+                pangolin.ModelViewLookAt(0, -10, -8, 0, 0, 0, 0, -1, 0))
+        self.handler = pangolin.Handler3D(self.scam)
+
+        # create the interactive window 
+        self.dcam = pangolin.CreateDisplay()
+        self.dcam.SetBounds(0.0, 1.0, 0.0, 1.0, -W/H)
+        self.dcam.SetHandler(self.handler)
+
+    # class method to refresh the viewer based on the contents of the queue
+    def viewer_refresh(self, queue):
+        if self.state is None or not queue.empty():
+            self.state = queue.get()
+
+        gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
+        gl.glClearColor(1.0, 1.0, 1.0, 1.0)
+        self.dcam.Activate(self.scam)
+
+        gl.glPointSize(10)
+        gl.glColor3f(0.0, 1.0, 0.0)        
+        pangolin.DrawCameras(self.state[0])
+
+        gl.glPointSize(2)
+        gl.glColor3f(0.0, 1.0, 0.0)
+        pangolin.DrawPoints(self.state[1])
+
+        pangolin.FinishFrame()
+
+    # class method to display map 
+    def display(self):
+        poses, pts = [], []
+        # include map frame poses into poses list
+        for frame in self.frames:
+            poses.append(frame.pose)
+
+        # print("onto the next one")
+        # if not self.points:
+            # print("Nononon")
+        # include map points int pts list
+        for p in self.points:
+            # print("hello, before hello")
+            pts.append(p.point)
+        self.queue.put((np.array(poses), np.array(pts)))
+
+map3d = Map() # map object
 
 # class for 3D points in an image frame 
 class Point(object):
     # class constructor
-    def __init__(self, location):
-        self.location = location
+    def __init__(self, img_map, location):
+        self.point = location
         self.frames = []
         self.idx = []
+        self.id = len(img_map.points)
+        img_map.points.append(self)
 
     # class method to add a frame and index from video
     # feed to the Point object
     def add_observation(self, frame, index):
         self.frames.append(frame)
         self.idx.append(index)
-
 
 # function to triangulate a 2D point into 3D space 
 def triangulate_point(pose1, pose2, pts1, pts2):
@@ -46,18 +118,17 @@ def triangulate_point(pose1, pose2, pts1, pts2):
 # obtained features and display back including matches
 def process_frame(img):
     img = cv2.resize(img, (W, H))
-    frame = Frame(img, K)
-    frames.append(frame)
-
-    if len(frames) <= 1: # make sure images actually exist
+    frame = Frame(map3d, img, K)
+    if frame.id == 0:
         return
 
-    # ret_val, rt = match(frames[-1], frames[-2])
-    idx1, idx2, rt = match(frames[-1], frames[-2])
-    frames[-1].pose = np.dot(rt, frames[-2].pose)
+    frame1 = map3d.frames[-1]
+    frame2 = map3d.frames[-2]
+    idx1, idx2, rt = match(frame1, frame2)
+    frame1.pose = np.dot(rt, frame2.pose)
 
     # homogenous 3D coordinates 
-    pts3d = triangulate_point(frames[-1].pose, frames[-2].pose, frames[-1].pts[idx1], frames[-2].pts[idx2])
+    pts3d = triangulate_point(frame1.pose, frame2.pose, frame1.pts[idx1], frame2.pts[idx2])
     pts3d /= pts3d[:, 3:]
 
     # ignore all points tehcnically considered to be behind the camera
@@ -67,18 +138,20 @@ def process_frame(img):
     for i, p in enumerate(pts3d):
         if not good_pts3d[i]: # if point is not "good"
             continue
-        pt = Point(p)
-        pt.add_observation(frames[-1], idx1[i])
-        pt.add_observation(frames[-2], idx2[i])
+        # print("new good point created")
+        pt = Point(map3d, p)
+        pt.add_observation(frame1, idx1[i])
+        pt.add_observation(frame2, idx2[i])
 
     # for pt1, pt2 in ret_val:
-    for pt1, pt2 in zip(frames[-1].pts[idx1], frames[-2].pts[idx2]):
+    for pt1, pt2 in zip(frame1.pts[idx1], frame2.pts[idx2]):
         u1, u2 = denormalize(K, pt1)
         v1, v2 = denormalize(K, pt2)
         cv2.circle(img, (u1, u2), color = (0, 255, 0), radius = 2)
         cv2.line(img, (u1, u2), (v1, v2), color = (255, 0, 255))
 
-    disp.paint(img)
+    # disp.paint(img) # 2D display
+    map3d.display() # 3D display
 
 def main():
     # check that user has provided video as program parameter

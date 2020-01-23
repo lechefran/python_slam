@@ -48,7 +48,11 @@ additional repositories in that separate directory.
 There are currently some issues with the building of additional software to aid in the creation of the 3D map display. There will probably be a need 
 to search for similar performing alternatives to get this program to work.
 
-## Current Updates  
+## Current Updates 
+1/23/20
+Finally got a working version of the 3D map display to work. Still a bit funny acting but works properly and even works
+as a thread. 
+ 
 1/22/20  
 Successfully built both g2opy and pangolin python bindings. Program refactoring now stores point indices.
 Indices are not stored and program now makes use of points as objects. Initial version of the 3D map 

@@ -7,6 +7,17 @@ np.set_printoptions(suppress = True)
 
 irt = np.eye(4)
 
+# class for the feature extractor using cv2 orbs
+class Frame(object):
+    def __init__(self, img_map, img, k):
+        self.k = k
+        self.kinv = np.linalg.inv(self.k)
+        pts, self.des = extract(img)
+        self.pts = normalize(self.kinv, pts)
+        self.pose = irt
+        self.id = len(img_map.frames)
+        img_map.frames.append(self)
+
 # transform [[x, y]] to [[x, y, 1]]
 def transform_with_one(x):
     return np.concatenate([x, np.ones((x.shape[0], 1))], axis = 1)
@@ -85,11 +96,3 @@ def extractRT(parameters, show_RT_values):
 
     return RT # return the values
 
-# class for the feature extractor using cv2 orbs
-class Frame(object):
-    def __init__(self, img, k):
-        self.k = k
-        self.kinv = np.linalg.inv(self.k)
-        pts, self.des = extract(img)
-        self.pts = normalize(self.kinv, pts)
-        self.pose = irt
