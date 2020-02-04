@@ -13,6 +13,7 @@ import numpy as np
 from display import Display2D
 from frame import Frame, denormalize, match, irt
 from dmap import Map
+from point import Point
 import g2o # requires user to install additional requirements from readme
 from multiprocessing import Process, Queue
 
@@ -23,22 +24,6 @@ K = np.array([[F, 0, W//2], [0, F, H//2], [0, 0, 1]])
 # display and extractor objects
 disp = Display2D("Display Window", W, H)
 map3d = Map() # map object
-
-# class for 3D points in an image frame 
-class Point(object):
-    # class constructor
-    def __init__(self, img_map, location):
-        self.point = location
-        self.frames = []
-        self.idx = []
-        self.id = len(img_map.points)
-        img_map.points.append(self)
-
-    # class method to add a frame and index from video
-    # feed to the Point object
-    def add_observation(self, frame, index):
-        self.frames.append(frame)
-        self.idx.append(index)
 
 # function to triangulate a 2D point into 3D space 
 def triangulate_point(pose1, pose2, pts1, pts2):
