@@ -7,6 +7,7 @@ import sys
 # lib directory in build path contains properly build g2o and pangolin
 sys.path.append("./build/lib")
 
+import os
 import cv2
 import time
 import numpy as np
@@ -18,12 +19,12 @@ import g2o # requires user to install additional requirements from readme
 from multiprocessing import Process, Queue
 
 # intrinsic matrix
-W, H, F = 1920//2, 1080//2, 270
+W, H, F = 1920//2, 1080//2, 800
 K = np.array([[F, 0, W//2], [0, F, H//2], [0, 0, 1]])
 
-# display and extractor objects
-disp = Display2D("Display Window", W, H)
-map3d = Map() # map object
+map3d = Map() # 3d map object
+map3d.create_viewer()
+disp = Display2D("Display Window", W, H) # 2d display window
 
 # function to triangulate a 2D point into 3D space 
 def triangulate_point(pose1, pose2, pts1, pts2):
@@ -67,7 +68,6 @@ def process_frame(img):
     for i, p in enumerate(pts3d):
         if not good_pts3d[i]: # if point is not "good"
             continue
-        # print("new good point created")
         pt = Point(map3d, p)
         pt.add_observation(frame1, idx1[i])
         pt.add_observation(frame2, idx2[i])

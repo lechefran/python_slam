@@ -12,6 +12,7 @@ irt = np.eye(4)
 class Frame(object):
     def __init__(self, img_map, img, k):
         self.k = k
+        self.w, self.h = img.shape[0:2]
         self.kinv = np.linalg.inv(self.k)
         pts, self.des = extract(img)
         self.pts = normalize(self.kinv, pts)
@@ -41,7 +42,7 @@ def match(frame1, frame2):
 
     # perform Lowe's Ratio test
     for m, n in matches:
-        if m.distance < 0.75 * n.distance: 
+        if m.distance < 0.75*n.distance: 
             # append to frame points
             k1 = frame1.pts[m.queryIdx]
             k2 = frame2.pts[m.trainIdx]
@@ -51,7 +52,7 @@ def match(frame1, frame2):
             # idx1.append(m.queryIdx)
             # idx2.append(m.trainIdx)
 
-            if np.linalg.norm((k1-k2)) < 0.1:
+            if np.linalg.norm((k1-k2)) < 0.1*np.linalg.norm([frame1.w, frame1.h]) and m.distance < 32:
                 idx1.append(m.queryIdx)
                 idx2.append(m.trainIdx)
                 ret_val.append((k1, k2))
@@ -62,9 +63,10 @@ def match(frame1, frame2):
     idx2 = np.array(idx2)
 
     # perform matrix fitting
-    model, inliers = ransac((ret_val[:, 0], ret_val[:, 1]), EssentialMatrixTransform,
+    model, inliers = ransac((ret_val[:, 0], ret_val[:, 1]), FundamentalMatrixTransform,
                             min_samples = 8, residual_threshold = 0.005, max_trials = 200)
     # print(sum(inliers), len(inliers))
+    print("Matches: %d -> %d -> %d -> %d" % (len(frame1.des), len(matches), len(inliers), sum(inliers))) 
     # ret_val = ret_val[inliers] # ignore all outliers
     rt = extractRT(model.params, sys.argv[1]) # show matrix values based on program flag
     return idx1[inliers], idx2[inliers], rt # return values

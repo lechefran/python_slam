@@ -14,11 +14,13 @@ class Map(object):
         self.frames = []
         self.points = []
         self.state = None
-        self.queue = Queue()
+        self.queue = None
 
-        process = Process(target = self.viewer_thread, args = (self.queue,))
-        process.daemon = True
-        process.start()
+    def create_viewer(self):
+        self.queue = Queue()
+        self.process = Process(target = self.viewer_thread, args = (self.queue,))
+        self.process.daemon = True
+        self.process.start()
 
     # Map display thread: keep updating display while queue is not empty
     def viewer_thread(self, queue):
@@ -32,7 +34,7 @@ class Map(object):
         gl.glEnable(gl.GL_DEPTH_TEST)
 
         self.scam = pangolin.OpenGlRenderState(
-                pangolin.ProjectionMatrix(W, H, 420, 420, W//2, H//2, 0.2, 1000),
+                pangolin.ProjectionMatrix(W, H, 420, 420, W//2, H//2, 0.2, 10000),
                 pangolin.ModelViewLookAt(0, -10, -8, 0, 0, 0, 0, -1, 0))
         self.handler = pangolin.Handler3D(self.scam)
 
@@ -62,6 +64,10 @@ class Map(object):
 
     # class method to display map 
     def display(self):
+        # check if queue even exists
+        if self.queue is None:
+            return
+
         poses, pts = [], []
         # include map frame poses into poses list
         for frame in self.frames:
