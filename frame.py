@@ -61,7 +61,7 @@ def match(frame1, frame2):
                             min_samples = 8, residual_threshold = 0.005, max_trials = 200)
     # print(sum(inliers), len(inliers))
     # ret_val = ret_val[inliers] # ignore all outliers
-    rt = extractRT(model.params, sys.argv[1]) # set false; no need to see match values
+    rt = extractRT(model.params, sys.argv[1]) # show matrix values based on program flag
     return idx1[inliers], idx2[inliers], rt # return values
 
 # function to denormalize a set of point values 

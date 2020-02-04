@@ -6,8 +6,8 @@ information extraction stage with map construction as a future goal of the proje
 ## Program Usage  
 After cloning this repository, run the program using 
 ```
-*./slam.py (additional info: -t or -f) video_name_here*
-*python3 slam.py (additional info: -t or -f) video_name_here*
+./slam.py (additional info: -t or -f) video_name_here
+python3 slam.py (additional info: -t or -f) video_name_here
 ```
 
 ## Required Libraries
