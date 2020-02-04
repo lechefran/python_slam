@@ -27,7 +27,21 @@ map3d = Map() # map object
 
 # function to triangulate a 2D point into 3D space 
 def triangulate_point(pose1, pose2, pts1, pts2):
-    return cv2.triangulatePoints(pose1[:3], pose2[:3], pts1.T, pts2.T).T
+    # return cv2.triangulatePoints(pose1[:3], pose2[:3], pts1.T, pts2.T).T
+    ret_val = np.zeros((pts1.shape[0], 4))
+    pose1 = np.linalg.inv(pose1)
+    pose2 = np.linalg.inv(pose2)
+
+    for i, j in enumerate(zip(pts1, pts2)):
+        temp = np.zeros((4, 4))
+        temp[0] = j[0][0] * pose1[2] - pose1[0]
+        temp[1] = j[0][1] * pose1[2] - pose1[1]
+        temp[2] = j[1][0] * pose1[2] - pose1[0]
+        temp[3] = j[1][1] * pose1[2] - pose1[1]
+        _, _, vt = np.linalg.svd(temp)
+        ret_val[i] = vt[3]
+
+    return ret_val
 
 # function to process the image frame from the video: track and draw on
 # obtained features and display back including matches

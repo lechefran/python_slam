@@ -41,15 +41,20 @@ def match(frame1, frame2):
 
     # perform Lowe's Ratio test
     for m, n in matches:
-        if m.distance < 0.75 * n.distance:
+        if m.distance < 0.75 * n.distance: 
             # append to frame points
             k1 = frame1.pts[m.queryIdx]
             k2 = frame2.pts[m.trainIdx]
-            ret_val.append((k1, k2))
+            # ret_val.append((k1, k2))
 
             # append to indices 
-            idx1.append(m.queryIdx)
-            idx2.append(m.trainIdx)
+            # idx1.append(m.queryIdx)
+            # idx2.append(m.trainIdx)
+
+            if np.linalg.norm((k1-k2)) < 0.1:
+                idx1.append(m.queryIdx)
+                idx2.append(m.trainIdx)
+                ret_val.append((k1, k2))
 
     assert len(ret_val) >= 8
     ret_val = np.array(ret_val)
