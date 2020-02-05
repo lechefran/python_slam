@@ -79,3 +79,46 @@ class Map(object):
 
         self.queue.put((np.array(poses), np.array(pts)))
 
+    # g2o graph optimizer for the 3d map
+    def PointMapOptimize(self):
+        # create the g2o optimizer
+        optimizer = g2o.SparseOptimizer()
+        graph_solver = g2o.BlockSolverSE3(g2o.LinearSolverCholmodSE3())
+        graph_solver = g2o.OptimizationAlgorithmLevenberg(graph_solver)
+        optimizer.set_algorithm(graph_solver)
+        robust_kernel = g2o.RobustKernelHuber(np.sqrt(5.991))
+
+        # add frames to the graph
+        for f in self.frames:
+            sbacam = g2o.SBACam(g2o.SE3Quat(f.pose[0:3, 0:3], f.pose[0:3, 3]))
+            sbacam.set_cam(f.k[0][0], f.k[1][1], f.k[2][0], f.k[2][1], 1.0)
+
+            v_se3 = g2o.VertexCam()
+            v_se3.set_id(f.id)
+            v_se3.set_estimate(sbacam)
+            v_se3.set_fixed(f.id == 0)
+            optimizer.add_vertex(v_se3)
+
+        # add points to the frames
+        for p in self.points:
+            pt = g2o.VertexSBAPointXYZ()
+            pt.set_id(p.id + 0x10000)
+            pt.set_estimate(p.point[0:3])
+            pt.set_marginalized(True)
+            pt.set_fixed(False)
+            optimizer.add_vertex(pt)
+
+            for f in p.frames:
+                edge = g2o.EdgeProjectP2MC()
+                edge.set_vertex(0, pt)
+                edge.set_vertex(1, optimizer.vertex(f.id))
+                uv = f.kps[f.pts.index(p)]
+                edge.set_measurement(uv)
+                edge.set_information(np.eye(2))
+                edge.set_robust_kernel(robust_kernel)
+                optimizer.add_edge(edge)
+
+            optimizer.set_verbose(True)
+            optimizer.initialize_optimization()
+            optimizer.optimize(20)
+

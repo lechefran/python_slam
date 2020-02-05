@@ -57,9 +57,9 @@ def process_frame(img):
     idx1, idx2, rt = match(frame1, frame2)
     frame1.pose = np.dot(rt, frame2.pose)
 
-    for i in range(len(frame2.pts)):
-        if frame2.pts[i] is not None:
-            frame2.pts
+    for i, idx in enumerate(idx2):
+        if frame2.pts[idx] is not None:
+            frame2.pts[idx].add_observation(frame1, idx1[i])
 
     # homogenous 3D coordinates 
     pts3d = triangulate_point(frame1.pose, frame2.pose, frame1.kps[idx1], frame2.kps[idx2])
@@ -67,13 +67,15 @@ def process_frame(img):
 
     # ignore all points tehcnically considered to be behind the camera
     # good_pts3d = (np.abs(pts3d[:, 3]) > 0.005) & (pts3d[:, 2] > 0)
-    unmatched_pts = np.array([frame1.pts[i] is None for i in idx1]).astype(np.bool)
+    unmatched_pts = np.array([frame1.pts[i] is None for i in idx1])
+    print("Adding %d points" % np.sum(unmatched_pts))
     good_pts3d = (np.abs(pts3d[:, 3]) > 0.005) & (pts3d[:, 2] > 0) & unmatched_pts
 
     # loop to create 3D points using points obtained from the image frames
     for i, p in enumerate(pts3d):
         if not good_pts3d[i]: # if point is not "good"
             continue
+
         pt = Point(map3d, p)
         pt.add_observation(frame1, idx1[i])
         pt.add_observation(frame2, idx2[i])
@@ -86,6 +88,11 @@ def process_frame(img):
         cv2.line(img, (u1, u2), (v1, v2), color = (255, 0, 255))
 
     disp.paint(img) # 2D display
+
+    # 3D map optimization
+    if frame.id >= 4:
+        map3d.PointMapOptimize()
+
     map3d.display() # 3D display
 
 def main():
