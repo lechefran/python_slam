@@ -1,7 +1,7 @@
 ## Python SLAM    
 This is a simple, evolving simultaneous localization and mapping program.
-This project is currently being developed using Python 3.x on Ubuntu 18.04 operating system. The program is currently in the feature and
-information extraction stage with map construction as a future goal of the project.
+This project is currently being developed using Python 3.x on Ubuntu 18.04 operating system. The program is now currently in the 3D map display
+and graph optimization stage with well coordinated and improved 3D map display as a future goal of the project.
 
 ## Program Usage  
 After cloning this repository, run the program using 
