@@ -37,9 +37,14 @@ had to be changed to *#include <python3.6/Python.h>* to work. Another change tha
 the *~/.bashrc* file of the main directory to include g2opy for the program to work. This can be fixed by import the system-specific parameters and 
 functions library using *import sys* and appending the directory path of g2o to the program.
 
+**Pangolin**  
+Pangolin is a lightweight library for managing the OpenGL display/interaction and abstracting video input. The version being used for this project 
+is the python binding for the Pangolin project. Check it out at [Pangolin](https://github.com/uoip/pangolin). Follow the installation instructions
+on the GitHub page.
+
 **Pygame**  
 Pygame is a free open source library for making multimedia applciations that are built on top for the SDL library. It is highly portable and runs on
-almost every platofmr available. Check them out at [Pygame](https://www.pygame.org/wiki/about). To install Pygame, follow the installation instructions
+almost every platofmr available. Check it out at [Pygame](https://www.pygame.org/wiki/about). To install Pygame, follow the installation instructions
 at [install Pygame](https://www.pygame.org/wiki/GettingStarted).
 
 It is recommended that you place all these additional repositories in a separate directory to keep you repository clean. Build all of the
@@ -47,9 +52,13 @@ additional repositories in that separate directory.
 
 ## Current Issues  
 There are currently some issues with the building of additional software to aid in the creation of the 3D map display. There will probably be a need 
-to search for similar performing alternatives to get this program to work.
+to search for similar performing alternatives to get this program to work. 3D display makes absolutely no sense whatsoever.
 
 ## Current Updates 
+2/4/20  
+Refactoring and adding new things to the code. New classes and functions. Added a basic optimizer for the 3D display.
+General code cleanup to come in the near future.
+
 1/23/20
 Finally got a working version of the 3D map display to work. Still a bit funny acting but works properly and even works
 as a thread. 
