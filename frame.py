@@ -6,7 +6,7 @@ from skimage.transform import FundamentalMatrixTransform
 import sys
 np.set_printoptions(suppress = True)
 
-irt = np.eye(4)
+# irt = np.eye(4)
 
 # class for the feature extractor using cv2 orbs
 class Frame(object):
@@ -17,9 +17,15 @@ class Frame(object):
         kps, self.des = extract(img)
         self.kps = normalize(self.kinv, kps)
         self.pts = [None]*len(self.kps)
-        self.pose = irt
+        self.pose = np.eye(4)
         self.id = len(img_map.frames)
         img_map.frames.append(self)
+
+def pose_rt(r, t):
+    ret_val = np.eye(4)
+    ret_val[:3, :3] = r
+    ret_val[:3, 3] = t
+    return ret_val
 
 # transform [[x, y]] to [[x, y, 1]]
 def transform_with_one(x):
@@ -101,13 +107,13 @@ def extractRT(parameters, show_RT_values):
         R = np.dot(np.dot(s, d.T), d)
     t = s[:, 2]
     # RT = np.concatenate([R, t.reshape(3, 1)], axis = 1)
-    RT = np.eye(4)
-    RT[:3, :3]  = R
-    RT[:3, 3] = t
+    # RT = np.eye(4)
+    # RT[:3, :3]  = R
+    # RT[:3, 3] = t
 
     # see if user wants to show the RT values
     if (show_RT_values == True):
         print(RT)
 
-    return RT # return the values
-
+    # return RT # return the values
+    return pose_rt(R, t)

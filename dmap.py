@@ -1,5 +1,6 @@
 import numpy as np
 from multiprocessing import Process, Queue
+from frame import pose_rt
 import g2o # requires user to install additional requirements from readme
 import pangolin
 import OpenGL.GL as gl
@@ -90,8 +91,12 @@ class Map(object):
 
         # add frames to the graph
         for f in self.frames:
-            sbacam = g2o.SBACam(g2o.SE3Quat(f.pose[0:3, 0:3], f.pose[0:3, 3]))
-            sbacam.set_cam(f.k[0][0], f.k[1][1], f.k[2][0], f.k[2][1], 1.0)
+            # sbacam = g2o.SBACam(g2o.SE3Quat(f.pose[0:3, 0:3], f.pose[0:3, 3]))
+            # sbacam.set_cam(f.k[0][0], f.k[1][1], f.k[2][0], f.k[2][1], 1.0)
+
+            pose = f.pose
+            sbacam = g2o.SBACam(g2o.SE3Quat(pose[0:3, 0:3], pose[0:3, 3]))
+            sbacam.set_cam(1.0, 1.0, 0.0, 0.0, 1.0)
 
             v_se3 = g2o.VertexCam()
             v_se3.set_id(f.id)
@@ -100,9 +105,10 @@ class Map(object):
             optimizer.add_vertex(v_se3)
 
         # add points to the frames
+        point_id_offset = 0x10000
         for p in self.points:
             pt = g2o.VertexSBAPointXYZ()
-            pt.set_id(p.id + 0x10000)
+            pt.set_id(p.id + point_id_offset)
             pt.set_estimate(p.point[0:3])
             pt.set_marginalized(True)
             pt.set_fixed(False)
@@ -118,7 +124,19 @@ class Map(object):
                 edge.set_robust_kernel(robust_kernel)
                 optimizer.add_edge(edge)
 
-            optimizer.set_verbose(True)
-            optimizer.initialize_optimization()
-            optimizer.optimize(20)
+        optimizer.set_verbose(True)
+        optimizer.initialize_optimization()
+        optimizer.optimize(10)
 
+        # put the frames back
+        for f in self.frames:
+            estimate = optimizer.vertex(f.id).estimate()
+            r = estimate.rotation().matrix()
+            t = estimate.translation()
+            f.pose = pose_rt(r, t)
+
+        # put points back
+        for p in self.points:
+            # print(p.id + point_id_offset)
+            est = optimizer.vertex(p.id + point_id_offset).estimate()
+            p.point = np.array(est)

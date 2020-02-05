@@ -12,7 +12,7 @@ import cv2
 import time
 import numpy as np
 from display import Display2D
-from frame import Frame, denormalize, match, irt
+from frame import Frame, denormalize, match
 from dmap import Map
 from point import Point
 import g2o # requires user to install additional requirements from readme
