@@ -57,12 +57,18 @@ def process_frame(img):
     idx1, idx2, rt = match(frame1, frame2)
     frame1.pose = np.dot(rt, frame2.pose)
 
+    for i in range(len(frame2.pts)):
+        if frame2.pts[i] is not None:
+            frame2.pts
+
     # homogenous 3D coordinates 
-    pts3d = triangulate_point(frame1.pose, frame2.pose, frame1.pts[idx1], frame2.pts[idx2])
+    pts3d = triangulate_point(frame1.pose, frame2.pose, frame1.kps[idx1], frame2.kps[idx2])
     pts3d /= pts3d[:, 3:]
 
     # ignore all points tehcnically considered to be behind the camera
-    good_pts3d = (np.abs(pts3d[:, 3]) > 0.005) & (pts3d[:, 2] > 0)
+    # good_pts3d = (np.abs(pts3d[:, 3]) > 0.005) & (pts3d[:, 2] > 0)
+    unmatched_pts = np.array([frame1.pts[i] is None for i in idx1]).astype(np.bool)
+    good_pts3d = (np.abs(pts3d[:, 3]) > 0.005) & (pts3d[:, 2] > 0) & unmatched_pts
 
     # loop to create 3D points using points obtained from the image frames
     for i, p in enumerate(pts3d):
@@ -73,7 +79,7 @@ def process_frame(img):
         pt.add_observation(frame2, idx2[i])
 
     # for pt1, pt2 in ret_val:
-    for pt1, pt2 in zip(frame1.pts[idx1], frame2.pts[idx2]):
+    for pt1, pt2 in zip(frame1.kps[idx1], frame2.kps[idx2]):
         u1, u2 = denormalize(K, pt1)
         v1, v2 = denormalize(K, pt2)
         cv2.circle(img, (u1, u2), color = (0, 255, 0), radius = 2)

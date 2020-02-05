@@ -11,6 +11,7 @@ class Point(object):
     # class method to add a frame and index from video
     # feed to the Point object
     def add_observation(self, frame, index):
+        frame.pts[index] = self
         self.frames.append(frame)
         self.idx.append(index)
 
