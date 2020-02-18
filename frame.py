@@ -14,8 +14,8 @@ class Frame(object):
         self.k = k
         self.w, self.h = img.shape[0:2]
         self.kinv = np.linalg.inv(self.k)
-        kps, self.des = extract(img)
-        self.kps = normalize(self.kinv, kps)
+        self._kps, self.des = extract(img)
+        self.kps = normalize(self.kinv, self._kps)
         self.pts = [None]*len(self.kps)
         self.pose = np.eye(4)
         self.id = len(img_map.frames)
@@ -98,7 +98,10 @@ def normalize(kinv, pts):
 def extractRT(parameters, show_RT_values):
     W = np.mat([[0, -1, 0], [1, 0, 0], [0, 0, 1]], dtype = float)
     s, v, d = np.linalg.svd(parameters)
-    assert np.linalg.det(s) > 0 # assert that value is never less that zero
+    # assert np.linalg.det(s) > 0 # assert that value is never less that zero
+    if np.linalg.det(s) < 0:
+        s *= -1.0
+
     if np.linalg.det(d) < 0:
         d *= -1.0
 

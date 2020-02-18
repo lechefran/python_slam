@@ -1,10 +1,13 @@
+import numpy as np
+
 # class for 3D points in an image frame 
 class Point(object):
     # class constructor
-    def __init__(self, img_map, location):
+    def __init__(self, img_map, location, color):
         self.point = location
         self.frames = []
         self.idx = []
+        self.color = np.copy(color)
         self.id = len(img_map.points)
         img_map.points.append(self)
 

@@ -57,9 +57,9 @@ class Map(object):
         gl.glColor3f(0.0, 1.0, 0.0)        
         pangolin.DrawCameras(self.state[0])
 
-        gl.glPointSize(2)
+        gl.glPointSize(5)
         gl.glColor3f(0.0, 1.0, 0.0)
-        pangolin.DrawPoints(self.state[1])
+        pangolin.DrawPoints(self.state[1], self.state[2])
 
         pangolin.FinishFrame()
 
@@ -69,7 +69,7 @@ class Map(object):
         if self.queue is None:
             return
 
-        poses, pts = [], []
+        poses, pts, colors = [], [], []
         # include map frame poses into poses list
         for frame in self.frames:
             poses.append(frame.pose)
@@ -77,8 +77,9 @@ class Map(object):
         # include map points int pts list
         for p in self.points:
             pts.append(p.point)
+            colors.append(p.color)
 
-        self.queue.put((np.array(poses), np.array(pts)))
+        self.queue.put((np.array(poses), np.array(pts), np.array(colors)/256.0))
 
     # g2o graph optimizer for the 3d map
     def PointMapOptimize(self):
@@ -96,12 +97,12 @@ class Map(object):
 
             pose = f.pose
             sbacam = g2o.SBACam(g2o.SE3Quat(pose[0:3, 0:3], pose[0:3, 3]))
-            sbacam.set_cam(1.0, 1.0, 0.0, 0.0, 1.0)
+            sbacam.set_cam(f.k[0][0], f.k[1][1], f.k[0][2], f.k[1][2], 1.0)
 
             v_se3 = g2o.VertexCam()
             v_se3.set_id(f.id)
             v_se3.set_estimate(sbacam)
-            v_se3.set_fixed(f.id == 0)
+            v_se3.set_fixed(f.id <= 1)
             optimizer.add_vertex(v_se3)
 
         # add points to the frames
@@ -118,7 +119,7 @@ class Map(object):
                 edge = g2o.EdgeProjectP2MC()
                 edge.set_vertex(0, pt)
                 edge.set_vertex(1, optimizer.vertex(f.id))
-                uv = f.kps[f.pts.index(p)]
+                uv = f._kps[f.pts.index(p)]
                 edge.set_measurement(uv)
                 edge.set_information(np.eye(2))
                 edge.set_robust_kernel(robust_kernel)
@@ -126,7 +127,7 @@ class Map(object):
 
         optimizer.set_verbose(True)
         optimizer.initialize_optimization()
-        optimizer.optimize(10)
+        optimizer.optimize(50)
 
         # put the frames back
         for f in self.frames:

@@ -76,7 +76,8 @@ def process_frame(img):
         if not good_pts3d[i]: # if point is not "good"
             continue
 
-        pt = Point(map3d, p)
+        u, v = int(round(frame1._kps[idx1[i], 0])), int(round(frame1._kps[idx1[i], 1]))
+        pt = Point(map3d, p, img[v, u])
         pt.add_observation(frame1, idx1[i])
         pt.add_observation(frame2, idx2[i])
 
