@@ -9,7 +9,6 @@ After cloning this repository, run the program using
 ./slam.py (additional info: -t or -f) video_name_here
 python3 slam.py (additional info: -t or -f) video_name_here
 ```
-
 ## Required Libraries
 This program is being written in Python3 and uses multiple libraries that have to be installed by the user separately.  
 Here is a list of the current fundamental Python libaries necessary to the project:  
@@ -32,29 +31,25 @@ Here is a list of additional requirements that are used for this project:
 **g2opy**
 This is a python binding of graph optimization C++ g2o. Check them out at [g2opy](https://github.com/uoip/g2opy).
 You can follow the installation steps using the provided link. Note that there may be problems that occur when following the installation process
-provided. In this repository's case, there was a need to modify the common.h file inside pybind11 where include statements such as *#include <Python.h>*
-had to be changed to *#include <python3.6/Python.h>* to work. Another change that had to be made was the inclusion of the *PYTHONPATH* of g2opy in
-the *~/.bashrc* file of the main directory to include g2opy for the program to work. This can be fixed by import the system-specific parameters and 
-functions library using *import sys* and appending the directory path of g2o to the program.
+provided. This can be fixed by import the system-specific parameters and functions library using *import sys* and appending the directory path of g2o to the program.
 
 **Pangolin**  
 Pangolin is a lightweight library for managing the OpenGL display/interaction and abstracting video input. The version being used for this project 
 is the python binding for the Pangolin project. Check it out at [Pangolin](https://github.com/uoip/pangolin). Follow the installation instructions
 on the GitHub page.
 
-**Pygame**  
-Pygame is a free open source library for making multimedia applciations that are built on top for the SDL library. It is highly portable and runs on
-almost every platofmr available. Check it out at [Pygame](https://www.pygame.org/wiki/about). To install Pygame, follow the installation instructions
-at [install Pygame](https://www.pygame.org/wiki/GettingStarted).
-
-It is recommended that you place all these additional repositories in a separate directory to keep you repository clean. Build all of the
-additional repositories in that separate directory.
+Note that these additional pybindings were built using Ubuntu 16.04 due to the fact that they build properly and reliably in that distribution version then in any other version. 
+Build in another version at own user discretion. It is also recommended that you place all these additional repositories in a separate directory to keep you repository clean. 
+Build all of the additional repositories in that separate directory.
 
 ## Current Issues  
 There are currently some issues with the building of additional software to aid in the creation of the 3D map display. There will probably be a need 
 to search for similar performing alternatives to get this program to work. 3D display makes absolutely no sense whatsoever.
 
 ## Current Updates 
+2/19/20  
+Refactoring of code. Added culling to program and some cases to prevent runtime issues.
+
 2/4/20  
 Refactoring and adding new things to the code. New classes and functions. Added a basic optimizer for the 3D display.
 General code cleanup to come in the near future.
