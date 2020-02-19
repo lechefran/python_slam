@@ -9,11 +9,14 @@ import sys
 # lib directory in build path contains properly build g2o and pangolin
 sys.path.append("./build/lib")
 
+LOCAL_WINDOW = 20
+
 # class for the Map object 
 class Map(object):
     def __init__(self):
         self.frames = []
         self.points = []
+        self.max_point = 0 # points counter
         self.state = None
         self.queue = None
 
@@ -50,7 +53,7 @@ class Map(object):
             self.state = queue.get()
 
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
-        gl.glClearColor(1.0, 1.0, 1.0, 1.0)
+        gl.glClearColor(0.0, 0.0, 0.0, 1.0)
         self.dcam.Activate(self.scam)
 
         gl.glPointSize(10)
@@ -90,11 +93,13 @@ class Map(object):
         optimizer.set_algorithm(graph_solver)
         robust_kernel = g2o.RobustKernelHuber(np.sqrt(5.991))
 
+        if LOCAL_WINDOW is None:
+            local_frames = self.frames
+        else:
+            local_frames = self.frames[-LOCAL_WINDOW:]
+
         # add frames to the graph
         for f in self.frames:
-            # sbacam = g2o.SBACam(g2o.SE3Quat(f.pose[0:3, 0:3], f.pose[0:3, 3]))
-            # sbacam.set_cam(f.k[0][0], f.k[1][1], f.k[2][0], f.k[2][1], 1.0)
-
             pose = f.pose
             sbacam = g2o.SBACam(g2o.SE3Quat(pose[0:3, 0:3], pose[0:3, 3]))
             sbacam.set_cam(f.k[0][0], f.k[1][1], f.k[0][2], f.k[1][2], 1.0)
@@ -102,12 +107,15 @@ class Map(object):
             v_se3 = g2o.VertexCam()
             v_se3.set_id(f.id)
             v_se3.set_estimate(sbacam)
-            v_se3.set_fixed(f.id <= 1)
+            v_se3.set_fixed(f.id <= 1 or f not in local_frames)
             optimizer.add_vertex(v_se3)
 
         # add points to the frames
         point_id_offset = 0x10000
         for p in self.points:
+            if not any([f in local_frames for f in p.frames]):
+                continue
+
             pt = g2o.VertexSBAPointXYZ()
             pt.set_id(p.id + point_id_offset)
             pt.set_estimate(p.point[0:3])
@@ -125,7 +133,7 @@ class Map(object):
                 edge.set_robust_kernel(robust_kernel)
                 optimizer.add_edge(edge)
 
-        optimizer.set_verbose(True)
+        # optimizer.set_verbose(True)
         optimizer.initialize_optimization()
         optimizer.optimize(50)
 
@@ -137,7 +145,30 @@ class Map(object):
             f.pose = pose_rt(r, t)
 
         # put points back
+        new_points = []
         for p in self.points:
-            # print(p.id + point_id_offset)
-            est = optimizer.vertex(p.id + point_id_offset).estimate()
-            p.point = np.array(est)
+            vert = optimizer.vertex(p.id + point_id_offset)
+            if vert is None:
+                new_points.append(p)
+                continue
+            estimate = vert.estimate()
+            old_point = len(p.frames) == 2 and p.frames[-1] not in local_frames
+
+            # try and computer the reprojection error of the point
+            errors = []
+            for f in p.frames:
+                uv = f._kps[f.pts.index(p)]
+                proj = np.dot(f.k, estimate)
+                proj = proj[0:2]/proj[2]
+                errors.append(np.linalg.norm(proj-uv))
+
+            # delete the point
+            # if (old_point and np.mean(errors) > 30) or np.mean(errors) > 100:
+                # p.delete_point()
+                # continue
+                
+            p.point = np.array(estimate)
+            new_points.append(p)
+
+        self.points = new_points
+        return optimizer.chi2()

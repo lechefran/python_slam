@@ -8,7 +8,9 @@ class Point(object):
         self.frames = []
         self.idx = []
         self.color = np.copy(color)
-        self.id = len(img_map.points)
+
+        self.id = img_map.max_point
+        img_map.max_point += 1
         img_map.points.append(self)
 
     # class method to add a frame and index from video
@@ -17,5 +19,10 @@ class Point(object):
         frame.pts[index] = self
         self.frames.append(frame)
         self.idx.append(index)
-
+    
+    # class method to delete a point from a frame
+    def delete_point(self):
+        for f in self.frames:
+            f.pts[f.pts.index(self)] = None
+        del self
 

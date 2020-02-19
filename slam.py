@@ -28,7 +28,6 @@ disp = Display2D("Display Window", W, H) # 2d display window
 
 # function to triangulate a 2D point into 3D space 
 def triangulate_point(pose1, pose2, pts1, pts2):
-    # return cv2.triangulatePoints(pose1[:3], pose2[:3], pts1.T, pts2.T).T
     ret_val = np.zeros((pts1.shape[0], 4))
     pose1 = np.linalg.inv(pose1)
     pose2 = np.linalg.inv(pose2)
@@ -62,14 +61,24 @@ def process_frame(img):
             frame2.pts[idx].add_observation(frame1, idx1[i])
 
     # homogenous 3D coordinates 
-    pts3d = triangulate_point(frame1.pose, frame2.pose, frame1.kps[idx1], frame2.kps[idx2])
-    pts3d /= pts3d[:, 3:]
+    # pts3d = triangulate_point(frame1.pose, frame2.pose, frame1.kps[idx1], frame2.kps[idx2])
+    # pts3d /= pts3d[:, 3:]
+    good_pts3d = np.array([frame1.pts[i] is None for i in idx1])
+
+    # points locally in front of the camera
+    pts_tri_local = triangulate_point(rt, np.eye(4), frame1.kps[idx1], frame2.kps[idx2])
+    good_pts3d &= np.abs(pts_tri_local[:, 3]) > 0.005
 
     # ignore all points tehcnically considered to be behind the camera
-    # good_pts3d = (np.abs(pts3d[:, 3]) > 0.005) & (pts3d[:, 2] > 0)
-    unmatched_pts = np.array([frame1.pts[i] is None for i in idx1])
-    print("Adding %d points" % np.sum(unmatched_pts))
-    good_pts3d = (np.abs(pts3d[:, 3]) > 0.005) & (pts3d[:, 2] > 0) & unmatched_pts
+    # unmatched_pts = np.array([frame1.pts[i] is None for i in idx1])
+    # print("Adding %d points" % np.sum(unmatched_pts))
+    # good_pts3d = (np.abs(pts3d[:, 3]) > 0.005) & (pts3d[:, 2] > 0) & unmatched_pts
+    pts_tri_local /= pts_tri_local[:, 3:]
+    good_pts3d &= pts_tri_local[:, 2] > 0
+
+    # project to map view
+    pts3d = np.dot(np.linalg.inv(frame1.pose), pts_tri_local.T).T
+    print("Adding: %d points" % np.sum(good_pts3d))
 
     # loop to create 3D points using points obtained from the image frames
     for i, p in enumerate(pts3d):
@@ -92,7 +101,8 @@ def process_frame(img):
 
     # 3D map optimization
     if frame.id >= 4:
-        map3d.PointMapOptimize()
+        error = map3d.PointMapOptimize()
+        print("Optimize: %f units of error" % error)
 
     map3d.display() # 3D display
 
@@ -108,10 +118,18 @@ def main():
         sys.argv[1] = True
     elif sys.argv[1] == "-f":
         sys.argv[1] = False
+    else:
+        print("Unexpected Flag Error: Please provide a proper flag argument")
+        exit(-1)
 
     video = cv2.VideoCapture(sys.argv[2]) # read in a mp4 file
     if video.isOpened() == False:
         print("Error, video file could not be loaded")
+
+    if os.getenv("D3D") is not None:
+        map3d.create_viewer()
+    if os.getenv("D2D") is not None:
+        disp = Display2D("Display Window", W, H) # 2d display window
 
     while (video.isOpened()):
         ret, frame = video.read()

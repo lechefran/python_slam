@@ -4,9 +4,8 @@ from skimage.measure import ransac
 from skimage.transform import EssentialMatrixTransform
 from skimage.transform import FundamentalMatrixTransform
 import sys
+import os
 np.set_printoptions(suppress = True)
-
-# irt = np.eye(4)
 
 # class for the feature extractor using cv2 orbs
 class Frame(object):
@@ -53,12 +52,7 @@ def match(frame1, frame2):
             # append to frame points
             k1 = frame1.kps[m.queryIdx]
             k2 = frame2.kps[m.trainIdx]
-            # ret_val.append((k1, k2))
-
-            # append to indices 
-            # idx1.append(m.queryIdx)
-            # idx2.append(m.trainIdx)
-            
+           
             if np.linalg.norm((k1-k2)) < 0.1*np.linalg.norm([frame1.w, frame1.h]) and m.distance < 32:
                 # prevent this from becoming quadratic in runtime
                 if m.queryIdx not in idx1 and m.trainIdx not in idx2:
@@ -80,13 +74,11 @@ def match(frame1, frame2):
                             min_samples = 8, residual_threshold = 0.005, max_trials = 200)
     # print(sum(inliers), len(inliers))
     print("Matches: %d -> %d -> %d -> %d" % (len(frame1.des), len(matches), len(inliers), sum(inliers))) 
-    # ret_val = ret_val[inliers] # ignore all outliers
     rt = extractRT(model.params, sys.argv[1]) # show matrix values based on program flag
     return idx1[inliers], idx2[inliers], rt # return values
 
 # function to denormalize a set of point values 
 def denormalize(k, pt):
-    # print(self.kinv)
     ret_val = np.dot(k, np.array([pt[0], pt[1], 1.0]))
     ret_val /= ret_val[2]
     return int(round(ret_val[0])), int(round(ret_val[1]))
@@ -98,7 +90,6 @@ def normalize(kinv, pts):
 def extractRT(parameters, show_RT_values):
     W = np.mat([[0, -1, 0], [1, 0, 0], [0, 0, 1]], dtype = float)
     s, v, d = np.linalg.svd(parameters)
-    # assert np.linalg.det(s) > 0 # assert that value is never less that zero
     if np.linalg.det(s) < 0:
         s *= -1.0
 
@@ -109,10 +100,9 @@ def extractRT(parameters, show_RT_values):
     if np.sum(R.diagonal()) < 0:
         R = np.dot(np.dot(s, d.T), d)
     t = s[:, 2]
-    # RT = np.concatenate([R, t.reshape(3, 1)], axis = 1)
-    # RT = np.eye(4)
-    # RT[:3, :3]  = R
-    # RT[:3, 3] = t
+
+    if os.getenv("REVERSE") is not None:
+        t *= -1
 
     # see if user wants to show the RT values
     if (show_RT_values == True):
