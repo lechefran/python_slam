@@ -6,9 +6,6 @@ import pangolin
 import OpenGL.GL as gl
 import sys
 
-# lib directory in build path contains properly build g2o and pangolin
-sys.path.append("./build/lib")
-
 LOCAL_WINDOW = 20
 
 # class for the Map object 

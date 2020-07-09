@@ -3,10 +3,6 @@
 # import system specific parameters and functions library to link g2o and
 # other additional files to this program
 import sys
-
-# lib directory in build path contains properly build g2o and pangolin
-sys.path.append("./build/lib")
-
 import os
 import cv2
 import time

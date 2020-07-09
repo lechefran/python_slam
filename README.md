@@ -15,7 +15,7 @@ Here is a list of the current fundamental Python libaries necessary to the proje
 
 **OpenCV**  
 OpenCV is a library that contains numerous computer vision algorithms. Check them out at [OpenCV](https://docs.opencv.org/3.4/d1/dfb/intro.html).  
-To install, use the command `pip3 install opencv-python`.
+To install, use the command `python3 -m pip install opencv-python`.
 
 **PySDL2**  
 PySDL2 is a Python wrapper for the SDL2 library. Check them out at [PySDL2](https://pysdl2.readthedocs.io/en/rel_0_9_6/index.html).  
@@ -23,7 +23,7 @@ To install, use the command `sudo apt install libsdl2-2.0`.
 
 **Scikit-image**
 Scikit-image (skimage) is a collection of image processing algorithms. Check them out at [Scikit-image](https://scikit-image.org/).  
-To install, use the command `pip3 install scikit-image`.
+To install, use the command `python3 -m pip install scikit-image`.
 
 ## Additional Requirements
 Here is a list of additional requirements that are used for this project:
@@ -32,11 +32,13 @@ Here is a list of additional requirements that are used for this project:
 This is a python binding of graph optimization C++ g2o. Check them out at [g2opy](https://github.com/uoip/g2opy).
 You can follow the installation steps using the provided link. Note that there may be problems that occur when following the installation process
 provided. This can be fixed by import the system-specific parameters and functions library using *import sys* and appending the directory path of g2o to the program.
+Another potential fix to any build problems (especially if only private modules are found) is to specify the python version when building by using `cmake -DPYBIND11_PYTHON_VERSION=3.6 ..`
+and `make -j8` when building the dependency for this program.
 
 **Pangolin**  
 Pangolin is a lightweight library for managing the OpenGL display/interaction and abstracting video input. The version being used for this project 
 is the python binding for the Pangolin project. Check it out at [Pangolin](https://github.com/uoip/pangolin). Follow the installation instructions
-on the GitHub page.
+on the GitHub page. If there are any problems with building, please consult the build steps for g2o found above.
 
 Note that these additional pybindings were built using Ubuntu 16.04 due to the fact that they build properly and reliably in that distribution version then in any other version. 
 Build in another version at own user discretion. It is also recommended that you place all these additional repositories in a separate directory to keep you repository clean. 
