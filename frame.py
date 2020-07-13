@@ -109,4 +109,4 @@ def extractRT(parameters, show_RT_values):
         print(RT)
 
     # return RT # return the values
-    return pose_rt(R, t)
+    return np.linalg.inv(pose_rt(R, t))

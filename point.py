@@ -13,6 +13,10 @@ class Point(object):
         img_map.max_point += 1
         img_map.points.append(self)
 
+    def orb(self):
+        frames = self.frames[-1]
+        return frames.des[frames.pts.index(self)]
+
     # class method to add a frame and index from video
     # feed to the Point object
     def add_observation(self, frame, index):

@@ -41,25 +41,31 @@ class Map(object):
 
         # create the interactive window 
         self.dcam = pangolin.CreateDisplay()
-        self.dcam.SetBounds(0.0, 1.0, 0.0, 1.0, -W/H)
+        self.dcam.SetBounds(0.0, 1.0, 0.0, 1.0, W/H)
         self.dcam.SetHandler(self.handler)
+
+        # hacking pangoling to avoid small Pangolin 
+        self.dcam.Resize(pangolin.Viewport(0, 0, W*2, H*2))
+        self.dcam.Activate()
 
     # class method to refresh the viewer based on the contents of the queue
     def viewer_refresh(self, queue):
-        if self.state is None or not queue.empty():
+        if not queue.empty():
             self.state = queue.get()
 
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
         gl.glClearColor(0.0, 0.0, 0.0, 1.0)
         self.dcam.Activate(self.scam)
 
-        gl.glPointSize(10)
-        gl.glColor3f(0.0, 1.0, 0.0)        
-        pangolin.DrawCameras(self.state[0])
+        # gl.glPointSize(10)
+        # gl.glColor3f(0.0, 1.0, 0.0)        
+        if self.state is not None:
+            gl.glColor3f(0.0, 1.0, 0.0)
+            pangolin.DrawCameras(self.state[0])
 
-        gl.glPointSize(5)
-        gl.glColor3f(0.0, 1.0, 0.0)
-        pangolin.DrawPoints(self.state[1], self.state[2])
+            gl.glPointSize(5)
+            gl.glColor3f(0.0, 1.0, 0.0)
+            pangolin.DrawPoints(self.state[1], self.state[2])
 
         pangolin.FinishFrame()
 
@@ -71,8 +77,8 @@ class Map(object):
 
         poses, pts, colors = [], [], []
         # include map frame poses into poses list
-        for frame in self.frames:
-            poses.append(frame.pose)
+        for f in self.frames:
+            poses.append(np.linalg.inv(f.pose))
 
         # include map points int pts list
         for p in self.points:
@@ -82,7 +88,7 @@ class Map(object):
         self.queue.put((np.array(poses), np.array(pts), np.array(colors)/256.0))
 
     # g2o graph optimizer for the 3d map
-    def PointMapOptimize(self):
+    def PointMapOptimize(self, local_window = LOCAL_WINDOW, fix_points = False, verbose = False):
         # create the g2o optimizer
         optimizer = g2o.SparseOptimizer()
         graph_solver = g2o.BlockSolverSE3(g2o.LinearSolverCholmodSE3())
@@ -90,14 +96,14 @@ class Map(object):
         optimizer.set_algorithm(graph_solver)
         robust_kernel = g2o.RobustKernelHuber(np.sqrt(5.991))
 
-        if LOCAL_WINDOW is None:
+        if local_window is None:
             local_frames = self.frames
         else:
-            local_frames = self.frames[-LOCAL_WINDOW:]
+            local_frames = self.frames[-local_window:]
 
         # add frames to the graph
         for f in self.frames:
-            pose = f.pose
+            pose = np.linalg.inv(f.pose)
             sbacam = g2o.SBACam(g2o.SE3Quat(pose[0:3, 0:3], pose[0:3, 3]))
             sbacam.set_cam(f.k[0][0], f.k[1][1], f.k[0][2], f.k[1][2], 1.0)
 
@@ -117,7 +123,7 @@ class Map(object):
             pt.set_id(p.id + point_id_offset)
             pt.set_estimate(p.point[0:3])
             pt.set_marginalized(True)
-            pt.set_fixed(False)
+            pt.set_fixed(fix_points)
             optimizer.add_vertex(pt)
 
             for f in p.frames:
@@ -131,6 +137,8 @@ class Map(object):
                 optimizer.add_edge(edge)
 
         # optimizer.set_verbose(True)
+        if verbose:
+            optimizer.set_verbose(True)
         optimizer.initialize_optimization()
         optimizer.optimize(50)
 
@@ -142,30 +150,28 @@ class Map(object):
             f.pose = pose_rt(r, t)
 
         # put points back
-        new_points = []
-        for p in self.points:
-            vert = optimizer.vertex(p.id + point_id_offset)
-            if vert is None:
-                new_points.append(p)
-                continue
-            estimate = vert.estimate()
-            old_point = len(p.frames) == 2 and p.frames[-1] not in local_frames
+        if not fix_points:
+            new_points = []
+            for p in self.points:
+                vert = optimizer.vertex(p.id + point_id_offset)
+                if vert is None:
+                    new_points.append(p)
+                    continue
+                estimate = vert.estimate()
+                old_point = len(p.frames) == 2 and p.frames[-1] not in local_frames
 
-            # try and computer the reprojection error of the point
-            errors = []
-            for f in p.frames:
-                uv = f._kps[f.pts.index(p)]
-                proj = np.dot(f.k, estimate)
-                proj = proj[0:2]/proj[2]
-                errors.append(np.linalg.norm(proj-uv))
+                # try and computer the reprojection error of the point
+                errors = []
+                for f in p.frames:
+                    uv = f._kps[f.pts.index(p)]
+                    proj = np.dot(np.dot(f.k, f.pose[:3]),
+                           np.array([estimate[0], estimate[1], estimate[2], 1.0]))
+                    proj = proj[0:2]/proj[2]
+                    errors.append(np.linalg.norm(proj-uv))
 
-            # delete the point
-            # if (old_point and np.mean(errors) > 30) or np.mean(errors) > 100:
-                # p.delete_point()
-                # continue
                 
-            p.point = np.array(estimate)
-            new_points.append(p)
+                p.point = np.array(estimate)
+                new_points.append(p)
 
-        self.points = new_points
-        return optimizer.chi2()
+            self.points = new_points
+            return optimizer.active_chi2()
