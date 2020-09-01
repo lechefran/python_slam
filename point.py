@@ -1,6 +1,6 @@
 import numpy as np
 
-# class for 3D points in an image frame 
+# class for 3D points in an image frame
 class Point(object):
     # class constructor
     def __init__(self, img_map, location, color):
@@ -23,10 +23,12 @@ class Point(object):
         frame.pts[index] = self
         self.frames.append(frame)
         self.idx.append(index)
-    
+
     # class method to delete a point from a frame
     def delete_point(self):
         for f in self.frames:
             f.pts[f.pts.index(self)] = None
         del self
 
+    def homogenous(self):
+        return np.array(self.point[0], self.point[1], self.point[2], 1.0)

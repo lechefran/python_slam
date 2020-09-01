@@ -8,7 +8,7 @@ import sys
 
 LOCAL_WINDOW = 20
 
-# class for the Map object 
+# class for the Map object
 class Map(object):
     def __init__(self):
         self.frames = []
@@ -29,9 +29,9 @@ class Map(object):
         while 1:
             self.viewer_refresh(queue)
 
-    # class method to initialize map viewer 
+    # class method to initialize map viewer
     def viewer_init(self, W, H):
-        pangolin.CreateWindowAndBind('Map View', 640, 480)
+        pangolin.CreateWindowAndBind('Map View', W, H)
         gl.glEnable(gl.GL_DEPTH_TEST)
 
         self.scam = pangolin.OpenGlRenderState(
@@ -39,37 +39,41 @@ class Map(object):
                 pangolin.ModelViewLookAt(0, -10, -8, 0, 0, 0, 0, -1, 0))
         self.handler = pangolin.Handler3D(self.scam)
 
-        # create the interactive window 
+        # create the interactive window
         self.dcam = pangolin.CreateDisplay()
         self.dcam.SetBounds(0.0, 1.0, 0.0, 1.0, W/H)
         self.dcam.SetHandler(self.handler)
 
-        # hacking pangoling to avoid small Pangolin 
+        # avoid small Pangolin
         self.dcam.Resize(pangolin.Viewport(0, 0, W*2, H*2))
         self.dcam.Activate()
 
     # class method to refresh the viewer based on the contents of the queue
     def viewer_refresh(self, queue):
-        if not queue.empty():
+        while not queue.empty():
             self.state = queue.get()
 
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
         gl.glClearColor(0.0, 0.0, 0.0, 1.0)
         self.dcam.Activate(self.scam)
 
-        # gl.glPointSize(10)
-        # gl.glColor3f(0.0, 1.0, 0.0)        
         if self.state is not None:
-            gl.glColor3f(0.0, 1.0, 0.0)
-            pangolin.DrawCameras(self.state[0])
+            if self.state[0].shape[0] >= 2:
+                gl.glColor3f(0.0, 1.0, 0.0)
+                pangolin.DrawCameras(self.state[0][:-1])
 
-            gl.glPointSize(5)
-            gl.glColor3f(0.0, 1.0, 0.0)
-            pangolin.DrawPoints(self.state[1], self.state[2])
+            if self.state[0].shape[0] >= 1:
+                gl.glColor3f(1.0, 1.0, 0.0)
+                pangolin.DrawCameras(self.state[0][-1:])
+
+            if self.state[1].shape[0] != 0:
+                gl.glPointSize(5)
+                gl.glColor3f(0.0, 1.0, 0.0)
+                pangolin.DrawPoints(self.state[1], self.state[2])
 
         pangolin.FinishFrame()
 
-    # class method to display map 
+    # class method to display map
     def display(self):
         # check if queue even exists
         if self.queue is None:
@@ -136,18 +140,17 @@ class Map(object):
                 edge.set_robust_kernel(robust_kernel)
                 optimizer.add_edge(edge)
 
-        # optimizer.set_verbose(True)
         if verbose:
             optimizer.set_verbose(True)
         optimizer.initialize_optimization()
-        optimizer.optimize(50)
+        optimizer.optimize(20)
 
         # put the frames back
         for f in self.frames:
             estimate = optimizer.vertex(f.id).estimate()
             r = estimate.rotation().matrix()
             t = estimate.translation()
-            f.pose = pose_rt(r, t)
+            f.pose = np.linalg.inv(pose_rt(r, t))
 
         # put points back
         if not fix_points:
@@ -169,9 +172,14 @@ class Map(object):
                     proj = proj[0:2]/proj[2]
                     errors.append(np.linalg.norm(proj-uv))
 
-                
+                # culling
+                if old_point or np.mean(errors) > 5:
+                    p.delete_point()
+                    continue
+
                 p.point = np.array(estimate)
                 new_points.append(p)
 
+            print("Culled points: %d" %(len(self.points) - len(new_points)))
             self.points = new_points
             return optimizer.active_chi2()

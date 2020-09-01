@@ -16,9 +16,9 @@ from multiprocessing import Process, Queue
 
 map3d = Map() # 3d map object
 # map3d.create_viewer()
-disp = None 
+disp = None
 
-# function to triangulate a 2D point into 3D space 
+# function to triangulate a 2D point into 3D space
 def triangulate_point(pose1, pose2, pts1, pts2):
     ret_val = np.zeros((pts1.shape[0], 4))
     # pose1 = np.linalg.inv(pose1)
@@ -35,6 +35,10 @@ def triangulate_point(pose1, pose2, pts1, pts2):
 
     return ret_val
 
+def hamming_distance(a, b):
+    r = (1 << np.arange(8))[:, None]
+    return np.count_nonzero((np.bitwise_xor(a, b) & r) != 0)
+
 # function to process the image frame from the video: track and draw on
 # obtained features and display back including matches
 def process_frame(img):
@@ -46,29 +50,31 @@ def process_frame(img):
     frame1 = map3d.frames[-1]
     frame2 = map3d.frames[-2]
     idx1, idx2, rt = match(frame1, frame2)
-    frame1.pose = np.dot(rt, frame2.pose)
+
+    if frame.id < 5:
+        frame1.pose = np.dot(rt, frame2.pose)
+    else:
+        velocity = np.dot(frame2.pose, np.linalg.inv(map3d.frames[-3].pose))
+        frame1.pose = np.dot(velocity, frame2.pose)
 
     for i, idx in enumerate(idx2):
         if frame2.pts[idx] is not None:
             frame2.pts[idx].add_observation(frame1, idx1[i])
 
-    # pose optimization 
+    # pose optimization
     pose_optimizer = map3d.PointMapOptimize(local_window=1, fix_points=True)
-    # print("Pose:    %f" % pose_optimizer)
 
-    # homogenous 3D coordinates 
-    # pts3d = triangulate_point(frame1.pose, frame2.pose, frame1.kps[idx1], frame2.kps[idx2])
-    # pts3d /= pts3d[:, 3:]
+    # search by projection
+    # sbp_pts_count = 0
+    # if len(map3d.points) > 0:
+    #     map_points = np.array([p.homogenous() for p in map3d.points])
+    #     projections = np.dot(np.dot(k, frame1.pose[:3]), map_points.T).T
+
     good_pts3d = np.array([frame1.pts[i] is None for i in idx1])
-
-    # points locally in front of the camera
-    # pts_tri_local = triangulate_point(rt, np.eye(4), frame1.kps[idx1], frame2.kps[idx2])
-    # good_pts3d &= np.abs(pts_tri_local[:, 3]) > 0.005
-
     pts3d = triangulate_point(frame1.pose, frame2.pose, frame1.kps[idx1], frame2.kps[idx2])
     good_pts3d &= np.abs(pts3d[:, 3]) > 0.005
 
-    # homogeneous 3-D coordinates 
+    # homogeneous 3-D coordinates
     pts3d /= pts3d[:, 3:]
     print("Adding: %d points" % np.sum(good_pts3d))
 
@@ -107,7 +113,7 @@ if __name__ == "__main__":
     if len(sys.argv) < 3:
         print("Error: Please provide a video file as a parameter\nexit(-1)")
         exit(-1)
-   
+
     if sys.argv[1] == "-t":
         sys.argv[1] = True
     elif sys.argv[1] == "-f":
@@ -116,6 +122,7 @@ if __name__ == "__main__":
         print("Unexpected Flag Error: Please provide a proper flag argument")
         exit(-1)
 
+    map3d.create_viewer()
     video = cv2.VideoCapture(sys.argv[2]) # read in a mp4 file
     if video.isOpened() == False:
         print("Error, video file could not be loaded")
@@ -142,4 +149,3 @@ if __name__ == "__main__":
 
     video.release()
     cv2.destroyAllWindows()
-

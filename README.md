@@ -4,7 +4,7 @@ This project is currently being developed using Python 3.x on Ubuntu 18.04 opera
 and graph optimization stage with well coordinated and improved 3D map display as a future goal of the project.
 
 ## Program Usage  
-After cloning this repository, run the program using 
+After cloning this repository, run the program using
 ```
 ./slam.py (additional info: -t or -f) video_name_here
 python3 slam.py (additional info: -t or -f) video_name_here
@@ -36,19 +36,18 @@ Another potential fix to any build problems (especially if only private modules 
 and `make -j8` when building the dependency for this program.
 
 **Pangolin**  
-Pangolin is a lightweight library for managing the OpenGL display/interaction and abstracting video input. The version being used for this project 
+Pangolin is a lightweight library for managing the OpenGL display/interaction and abstracting video input. The version being used for this project
 is the python binding for the Pangolin project. Check it out at [Pangolin](https://github.com/uoip/pangolin). Follow the installation instructions
 on the GitHub page. If there are any problems with building, please consult the build steps for g2o found above.
 
-Note that these additional pybindings were built using Ubuntu 16.04 due to the fact that they build properly and reliably in that distribution version then in any other version. 
-Build in another version at own user discretion. It is also recommended that you place all these additional repositories in a separate directory to keep you repository clean. 
+Note that these additional pybindings were built using Ubuntu 16.04 due to the fact that they build properly and reliably in that distribution version then in any other version.
+Build in another version at own user discretion. It is also recommended that you place all these additional repositories in a separate directory to keep you repository clean.
 Build all of the additional repositories in that separate directory.
 
 ## Current Issues  
-There are currently some issues with the building of additional software to aid in the creation of the 3D map display. There will probably be a need 
-to search for similar performing alternatives to get this program to work. 3D display makes absolutely no sense whatsoever.
+There are currently some issues in regards to the performance of the optimizer. This may have be an issue that has blindsided the project and will be investigated.
 
-## Current Updates 
+## Current Updates
 2/19/20  
 Refactoring of code. Added culling to program and some cases to prevent runtime issues.
 
@@ -58,11 +57,11 @@ General code cleanup to come in the near future.
 
 1/23/20
 Finally got a working version of the 3D map display to work. Still a bit funny acting but works properly and even works
-as a thread. 
- 
+as a thread.
+
 1/22/20  
 Successfully built both g2opy and pangolin python bindings. Program refactoring now stores point indices.
-Indices are not stored and program now makes use of points as objects. Initial version of the 3D map 
+Indices are not stored and program now makes use of points as objects. Initial version of the 3D map
 display for the program coming soon.
 
 12/20/19

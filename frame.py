@@ -1,10 +1,12 @@
 import cv2
 import numpy as np
+from scipy.spatial import cKDTree
 from skimage.measure import ransac
 from skimage.transform import EssentialMatrixTransform
 from skimage.transform import FundamentalMatrixTransform
 import sys
 import os
+
 np.set_printoptions(suppress = True)
 
 # class for the feature extractor using cv2 orbs
@@ -17,7 +19,9 @@ class Frame(object):
         self.kps = normalize(self.kinv, self._kps)
         self.pts = [None]*len(self.kps)
         self.pose = np.eye(4)
+        self.kd = cKDTree(self._kps)
         self.id = len(img_map.frames)
+
         img_map.frames.append(self)
 
 def pose_rt(r, t):
@@ -34,7 +38,7 @@ def transform_with_one(x):
 def extract(img):
     # find noteworthy points on grid to extract
     orb = cv2.ORB_create()
-    features = cv2.goodFeaturesToTrack(np.mean(img, axis = 2).astype(np.uint8), 3000, qualityLevel = 0.01, minDistance = 5)
+    features = cv2.goodFeaturesToTrack(np.mean(img, axis = 2).astype(np.uint8), 3000, qualityLevel = 0.01, minDistance = 7)
     key_points = [cv2.KeyPoint(x = f[0][0], y = f[0][1], _size = 20) for f in features]
     key_points, descriptors = orb.compute(img, key_points)
     return np.array([(kp.pt[0], kp.pt[1]) for kp in key_points]), descriptors
@@ -48,11 +52,11 @@ def match(frame1, frame2):
 
     # perform Lowe's Ratio test
     for m, n in matches:
-        if m.distance < 0.75*n.distance: 
+        if m.distance < 0.75*n.distance:
             # append to frame points
             k1 = frame1.kps[m.queryIdx]
             k2 = frame2.kps[m.trainIdx]
-           
+
             if np.linalg.norm((k1-k2)) < 0.1*np.linalg.norm([frame1.w, frame1.h]) and m.distance < 32:
                 # prevent this from becoming quadratic in runtime
                 if m.queryIdx not in idx1 and m.trainIdx not in idx2:
@@ -60,7 +64,7 @@ def match(frame1, frame2):
                     idx2.append(m.trainIdx)
                     ret_val.append((k1, k2))
 
-    # prevent duplicates 
+    # prevent duplicates
     assert(len(set(idx1)) == len(idx1))
     assert(len(set(idx2)) == len(idx2))
 
@@ -71,19 +75,19 @@ def match(frame1, frame2):
 
     # perform matrix fitting
     model, inliers = ransac((ret_val[:, 0], ret_val[:, 1]), FundamentalMatrixTransform,
-                            min_samples = 8, residual_threshold = 0.005, max_trials = 200)
+                            min_samples = 8, residual_threshold = 0.001, max_trials = 100)
     # print(sum(inliers), len(inliers))
-    print("Matches: %d -> %d -> %d -> %d" % (len(frame1.des), len(matches), len(inliers), sum(inliers))) 
+    print("Matches: %d -> %d -> %d -> %d" % (len(frame1.des), len(matches), len(inliers), sum(inliers)))
     rt = extractRT(model.params, sys.argv[1]) # show matrix values based on program flag
     return idx1[inliers], idx2[inliers], rt # return values
 
-# function to denormalize a set of point values 
+# function to denormalize a set of point values
 def denormalize(k, pt):
     ret_val = np.dot(k, np.array([pt[0], pt[1], 1.0]))
     ret_val /= ret_val[2]
     return int(round(ret_val[0])), int(round(ret_val[1]))
 
-# function to normalize a set of point values 
+# function to normalize a set of point values
 def normalize(kinv, pts):
     return np.dot(kinv, transform_with_one(pts).T).T[:, 0:2]
 
@@ -106,7 +110,7 @@ def extractRT(parameters, show_RT_values):
 
     # see if user wants to show the RT values
     if (show_RT_values == True):
-        print(RT)
+        print(R)
 
     # return RT # return the values
     return np.linalg.inv(pose_rt(R, t))
