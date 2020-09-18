@@ -50,7 +50,7 @@ class Map(object):
 
     # class method to refresh the viewer based on the contents of the queue
     def viewer_refresh(self, queue):
-        while not queue.empty():
+        if not queue.empty():
             self.state = queue.get()
 
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
@@ -58,18 +58,13 @@ class Map(object):
         self.dcam.Activate(self.scam)
 
         if self.state is not None:
-            if self.state[0].shape[0] >= 2:
-                gl.glColor3f(0.0, 1.0, 0.0)
-                pangolin.DrawCameras(self.state[0][:-1])
+            gl.glColor3f(0.0, 1.0, 0.0)
+            pangolin.DrawCameras(self.state[0])
 
-            if self.state[0].shape[0] >= 1:
-                gl.glColor3f(1.0, 1.0, 0.0)
-                pangolin.DrawCameras(self.state[0][-1:])
-
-            if self.state[1].shape[0] != 0:
-                gl.glPointSize(5)
-                gl.glColor3f(0.0, 1.0, 0.0)
-                pangolin.DrawPoints(self.state[1], self.state[2])
+            # draw keypoints
+            gl.glPointSize(5)
+            gl.glColor3f(1.0, 0.0, 0.0)
+            pangolin.DrawPoints(self.state[1], self.state[2])
 
         pangolin.FinishFrame()
 
@@ -92,7 +87,7 @@ class Map(object):
         self.queue.put((np.array(poses), np.array(pts), np.array(colors)/256.0))
 
     # g2o graph optimizer for the 3d map
-    def PointMapOptimize(self, local_window = LOCAL_WINDOW, fix_points = False, verbose = False):
+    def optimize(self, local_window = LOCAL_WINDOW, fix_points = False, verbose = False):
         # create the g2o optimizer
         optimizer = g2o.SparseOptimizer()
         graph_solver = g2o.BlockSolverSE3(g2o.LinearSolverCholmodSE3())
@@ -143,7 +138,7 @@ class Map(object):
         if verbose:
             optimizer.set_verbose(True)
         optimizer.initialize_optimization()
-        optimizer.optimize(20)
+        optimizer.optimize(50)
 
         # put the frames back
         for f in self.frames:
@@ -173,7 +168,7 @@ class Map(object):
                     errors.append(np.linalg.norm(proj-uv))
 
                 # culling
-                if old_point or np.mean(errors) > 5:
+                if old_point or np.mean(errors) > 100:
                     p.delete_point()
                     continue
 

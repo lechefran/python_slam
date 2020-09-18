@@ -11,7 +11,6 @@ class Display2D(object):
         self.window.show()
 
     def paint(self, img):
-        # pretty much junk at this point
         events = sdl2.ext.get_events()
         for event in events:
             if event.type == sdl2.SDL_QUIT:

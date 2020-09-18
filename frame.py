@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from scipy.spatial import cKDTree
+from scipy.spatial import KDTree
 from skimage.measure import ransac
 from skimage.transform import EssentialMatrixTransform
 from skimage.transform import FundamentalMatrixTransform
@@ -19,7 +19,7 @@ class Frame(object):
         self.kps = normalize(self.kinv, self._kps)
         self.pts = [None]*len(self.kps)
         self.pose = np.eye(4)
-        self.kd = cKDTree(self._kps)
+        self.kd = KDTree(self._kps)
         self.id = len(img_map.frames)
 
         img_map.frames.append(self)
@@ -31,7 +31,7 @@ def pose_rt(r, t):
     return ret_val
 
 # transform [[x, y]] to [[x, y, 1]]
-def transform_with_one(x):
+def add_one(x):
     return np.concatenate([x, np.ones((x.shape[0], 1))], axis = 1)
 
 # function to extract features from an image frame
@@ -57,6 +57,7 @@ def match(frame1, frame2):
             k1 = frame1.kps[m.queryIdx]
             k2 = frame2.kps[m.trainIdx]
 
+            # less than 10% diagonal travel within orb distance
             if np.linalg.norm((k1-k2)) < 0.1*np.linalg.norm([frame1.w, frame1.h]) and m.distance < 32:
                 # prevent this from becoming quadratic in runtime
                 if m.queryIdx not in idx1 and m.trainIdx not in idx2:
@@ -78,7 +79,7 @@ def match(frame1, frame2):
                             min_samples = 8, residual_threshold = 0.001, max_trials = 100)
     # print(sum(inliers), len(inliers))
     print("Matches: %d -> %d -> %d -> %d" % (len(frame1.des), len(matches), len(inliers), sum(inliers)))
-    rt = extractRT(model.params, sys.argv[1]) # show matrix values based on program flag
+    rt = extractRT(model.params) # show matrix values
     return idx1[inliers], idx2[inliers], rt # return values
 
 # function to denormalize a set of point values
@@ -91,7 +92,7 @@ def denormalize(k, pt):
 def normalize(kinv, pts):
     return np.dot(kinv, transform_with_one(pts).T).T[:, 0:2]
 
-def extractRT(parameters, show_RT_values):
+def extractRT(parameters):
     W = np.mat([[0, -1, 0], [1, 0, 0], [0, 0, 1]], dtype = float)
     s, v, d = np.linalg.svd(parameters)
     if np.linalg.det(s) < 0:
@@ -102,15 +103,10 @@ def extractRT(parameters, show_RT_values):
 
     R = np.dot(np.dot(s, W), d)
     if np.sum(R.diagonal()) < 0:
-        R = np.dot(np.dot(s, d.T), d)
+        R = np.dot(np.dot(s, W.T), d)
     t = s[:, 2]
 
     if os.getenv("REVERSE") is not None:
         t *= -1
 
-    # see if user wants to show the RT values
-    if (show_RT_values == True):
-        print(R)
-
-    # return RT # return the values
     return np.linalg.inv(pose_rt(R, t))

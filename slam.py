@@ -15,14 +15,11 @@ import g2o # requires user to install additional requirements from readme
 from multiprocessing import Process, Queue
 
 map3d = Map() # 3d map object
-# map3d.create_viewer()
 disp = None
 
 # function to triangulate a 2D point into 3D space
-def triangulate_point(pose1, pose2, pts1, pts2):
+def triangulate(pose1, pose2, pts1, pts2):
     ret_val = np.zeros((pts1.shape[0], 4))
-    # pose1 = np.linalg.inv(pose1)
-    # pose2 = np.linalg.inv(pose2)
 
     for i, j in enumerate(zip(pts1, pts2)):
         temp = np.zeros((4, 4))
@@ -47,6 +44,8 @@ def process_frame(img):
     if frame.id == 0:
         return
 
+     print("\n*** frame %d ***" % (frame.id))
+
     frame1 = map3d.frames[-1]
     frame2 = map3d.frames[-2]
     idx1, idx2, rt = match(frame1, frame2)
@@ -63,12 +62,23 @@ def process_frame(img):
 
     # pose optimization
     pose_optimizer = map3d.PointMapOptimize(local_window=1, fix_points=True)
+    print("Pose: %f" % pose_optimizer)
 
-    # search by projection
-    # sbp_pts_count = 0
-    # if len(map3d.points) > 0:
-    #     map_points = np.array([p.homogenous() for p in map3d.points])
-    #     projections = np.dot(np.dot(k, frame1.pose[:3]), map_points.T).T
+    # projection search
+    projection_pts_count = 0
+    if len(map3d.points) > 0:
+        map_points = np.array([p.homogenous() for p in map3d.points])
+        projs = np.dot(np.dot(K, frame1.pose[:3]), map_points.T).T
+        projs = projs[:, 0:2]/projs[:, 2:]
+
+        for i, p in enumerate(map3d.points):
+            queue = frame1.kd.query_ball_points(projs[i], 5)
+            for q in queue:
+                if frame1.points[q] is None:
+                    o_dist = hamming_distance(p.orb(), frame1.des[q])
+                    if o_dist < 32.0:
+                        p.add_observation(frame1, q)
+                        projection_pts_count += 1
 
     good_pts3d = np.array([frame1.pts[i] is None for i in idx1])
     pts3d = triangulate_point(frame1.pose, frame2.pose, frame1.kps[idx1], frame2.kps[idx2])
