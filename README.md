@@ -19,7 +19,7 @@ To install, use the command `python3 -m pip install opencv-python`.
 
 **PySDL2**  
 PySDL2 is a Python wrapper for the SDL2 library. Check them out at [PySDL2](https://pysdl2.readthedocs.io/en/rel_0_9_6/index.html).  
-To install, use the command `sudo apt install libsdl2-2.0`.
+To install, use the command `python3 -m pip install pysdl2`.
 
 **Scikit-image**
 Scikit-image (skimage) is a collection of image processing algorithms. Check them out at [Scikit-image](https://scikit-image.org/).  
