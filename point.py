@@ -31,4 +31,4 @@ class Point(object):
         del self
 
     def homogenous(self):
-        return np.array(self.point[0], self.point[1], self.point[2], 1.0)
+        return np.array([self.point[0], self.point[1], self.point[2], 1.0])

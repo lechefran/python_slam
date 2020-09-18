@@ -44,7 +44,7 @@ def process_frame(img):
     if frame.id == 0:
         return
 
-     print("\n*** frame %d ***" % (frame.id))
+     # print("\n*** frame %d ***" % (frame.id))
 
     frame1 = map3d.frames[-1]
     frame2 = map3d.frames[-2]
@@ -61,8 +61,8 @@ def process_frame(img):
             frame2.pts[idx].add_observation(frame1, idx1[i])
 
     # pose optimization
-    pose_optimizer = map3d.PointMapOptimize(local_window=1, fix_points=True)
-    print("Pose: %f" % pose_optimizer)
+    pose_optimizer = map3d.optimize(local_window=1, fix_points=True)
+    # print("Pose: %f" % pose_optimizer)
 
     # projection search
     projection_pts_count = 0
@@ -72,16 +72,16 @@ def process_frame(img):
         projs = projs[:, 0:2]/projs[:, 2:]
 
         for i, p in enumerate(map3d.points):
-            queue = frame1.kd.query_ball_points(projs[i], 5)
+            queue = frame1.kd.query_ball_point(projs[i], 5)
             for q in queue:
-                if frame1.points[q] is None:
+                if frame1.pts[q] is None:
                     o_dist = hamming_distance(p.orb(), frame1.des[q])
                     if o_dist < 32.0:
                         p.add_observation(frame1, q)
                         projection_pts_count += 1
 
     good_pts3d = np.array([frame1.pts[i] is None for i in idx1])
-    pts3d = triangulate_point(frame1.pose, frame2.pose, frame1.kps[idx1], frame2.kps[idx2])
+    pts3d = triangulate(frame1.pose, frame2.pose, frame1.kps[idx1], frame2.kps[idx2])
     good_pts3d &= np.abs(pts3d[:, 3]) > 0.005
 
     # homogeneous 3-D coordinates
@@ -110,14 +110,13 @@ def process_frame(img):
 
     # 3D map optimization
     if frame.id >= 4:
-        error = map3d.PointMapOptimize()
+        error = map3d.optimize()
         print("Optimize: %f units of error" % error)
 
     map3d.display() # 3D display
 
 if __name__ == "__main__":
     debug_parameter = False # check if there was a debug system parameter
-
 
     # check that user has provided video as program parameter
     if len(sys.argv) < 3:
