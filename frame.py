@@ -90,7 +90,7 @@ def denormalize(k, pt):
 
 # function to normalize a set of point values
 def normalize(kinv, pts):
-    return np.dot(kinv, transform_with_one(pts).T).T[:, 0:2]
+    return np.dot(kinv, add_one(pts).T).T[:, 0:2]
 
 def extractRT(parameters):
     W = np.mat([[0, -1, 0], [1, 0, 0], [0, 0, 1]], dtype = float)
