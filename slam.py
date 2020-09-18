@@ -86,15 +86,20 @@ def process_frame(img):
 
     # homogeneous 3-D coordinates
     pts3d /= pts3d[:, 3:]
+
+    pts_tri_local = triangulate(rt, np.eye(4), frame1.kps[idx1], frame2.kps[idx2])
+    pts_tri_local /= pts_tri_local[:, 3:]
+    good_pts3d &= pts_tri_local[:, 2] > 0
+
     print("Adding: %d points" % np.sum(good_pts3d))
 
     # loop to create 3D points using points obtained from the image frames
     for i, p in enumerate(pts3d):
-        if not good_pts3d[i]: # if point is not "good"
+        if not good_pts3d[i]:
             continue
 
         u, v = int(round(frame1._kps[idx1[i], 0])), int(round(frame1._kps[idx1[i], 1]))
-        pt = Point(map3d, p, img[v, u])
+        pt = Point(map3d, p[0:3], img[v, u])
         pt.add_observation(frame1, idx1[i])
         pt.add_observation(frame2, idx2[i])
 
@@ -102,7 +107,7 @@ def process_frame(img):
     for pt1, pt2 in zip(frame1.kps[idx1], frame2.kps[idx2]):
         u1, u2 = denormalize(K, pt1)
         v1, v2 = denormalize(K, pt2)
-        cv2.circle(img, (u1, u2), color = (0, 255, 0), radius = 2)
+        cv2.circle(img, (u1, u2), color = (0, 255, 0), radius = 3)
         cv2.line(img, (u1, u2), (v1, v2), color = (255, 0, 255))
 
     if disp is not None:
@@ -119,20 +124,12 @@ if __name__ == "__main__":
     debug_parameter = False # check if there was a debug system parameter
 
     # check that user has provided video as program parameter
-    if len(sys.argv) < 3:
+    if len(sys.argv) < 2:
         print("Error: Please provide a video file as a parameter\nexit(-1)")
         exit(-1)
 
-    if sys.argv[1] == "-t":
-        sys.argv[1] = True
-    elif sys.argv[1] == "-f":
-        sys.argv[1] = False
-    else:
-        print("Unexpected Flag Error: Please provide a proper flag argument")
-        exit(-1)
-
     map3d.create_viewer()
-    video = cv2.VideoCapture(sys.argv[2]) # read in a mp4 file
+    video = cv2.VideoCapture(sys.argv[1]) # read in a mp4 file
     if video.isOpened() == False:
         print("Error, video file could not be loaded")
 
