@@ -6,12 +6,13 @@ and graph optimization stage with well coordinated and improved 3D map display a
 ## Program Usage  
 After cloning this repository, run the program using
 ```
-./slam.py (additional info: -t or -f) video_name_here
-python3 slam.py (additional info: -t or -f) video_name_here
+./slam.py video_name.mp4
+python3 slam.py  video_name.mp4
 ```
+
 ## Required Libraries
 This program is being written in Python3 and uses multiple libraries that have to be installed by the user separately.  
-Here is a list of the current fundamental Python libaries necessary to the project:  
+Here is a list of the current fundamental Python libraries necessary to the project:  
 
 **OpenCV**  
 OpenCV is a library that contains numerous computer vision algorithms. Check them out at [OpenCV](https://docs.opencv.org/3.4/d1/dfb/intro.html).  
