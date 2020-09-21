@@ -143,7 +143,7 @@ class Map(object):
         if verbose:
             optimizer.set_verbose(True)
         optimizer.initialize_optimization()
-        optimizer.optimize(50)
+        optimizer.optimize(20)
 
         # put the frames back
         for f in self.frames:
