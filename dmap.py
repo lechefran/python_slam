@@ -173,7 +173,7 @@ class Map(object):
                     errors.append(np.linalg.norm(proj-uv))
 
                 # culling
-                if old_point or np.mean(errors) > 100:
+                if old_point or np.mean(errors) > 5:
                     p.delete_point()
                     continue
 

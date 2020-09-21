@@ -39,6 +39,7 @@ def hamming_distance(a, b):
 # function to process the image frame from the video: track and draw on
 # obtained features and display back including matches
 def process_frame(img):
+    start_time = time.time()
     img = cv2.resize(img, (W, H))
     frame = Frame(map3d, img, K)
     if frame.id == 0:
@@ -93,8 +94,8 @@ def process_frame(img):
     pts3d /= pts3d[:, 3:]
 
     # should reject points hehind the camera
-    # pts_tri_local = np.dot(frame1.pose, pts3d.T).T
-    # good_pts3d &= pts_tri_local[:, 2] > 0
+    pts_tri_local = np.dot(frame1.pose, pts3d.T).T
+    good_pts3d &= pts_tri_local[:, 2] > 0
 
     print("Adding: %d points" % np.sum(good_pts3d))
 
@@ -125,11 +126,14 @@ def process_frame(img):
         disp.paint(img) # 2D display
 
     # 3D map optimization
-    if frame.id >= 4 and frame.id % 3 == 0:
+    if frame.id >= 4 and frame.id % 5 == 0:
         error = map3d.optimize()
         print("Optimize: %f units of error" % error)
 
     map3d.display() # 3D display
+    end_time = time.time()
+    print("Time: %.2f ms" % ((end_time - start_time) * 1000.0))
+    print("Map: %d points, %d frames" % (len(map3d.points), len(map3d.frames)))
 
 if __name__ == "__main__":
     debug_parameter = False # check if there was a debug system parameter
