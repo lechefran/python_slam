@@ -92,9 +92,9 @@ def process_frame(img):
     # homogeneous 3-D coordinates
     pts3d /= pts3d[:, 3:]
 
-    pts_tri_local = triangulate(rt, np.eye(4), frame1.kps[idx1], frame2.kps[idx2])
-    pts_tri_local /= pts_tri_local[:, 3:]
-    good_pts3d &= pts_tri_local[:, 2] > 0
+    # should reject points hehind the camera
+    # pts_tri_local = np.dot(frame1.pose, pts3d.T).T
+    # good_pts3d &= pts_tri_local[:, 2] > 0
 
     print("Adding: %d points" % np.sum(good_pts3d))
 
@@ -158,6 +158,7 @@ if __name__ == "__main__":
         F *= downscale
         H = int(H * downscale)
         W = 1024
+        print("using camera %dx%d with F %f" % (W, H, F))
 
     disp = Display2D("Display Window", W, H) # 2d display window
 

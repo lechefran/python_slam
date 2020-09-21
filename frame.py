@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from scipy.spatial import KDTree
+from scipy.spatial import cKDTree
 from skimage.measure import ransac
 from skimage.transform import EssentialMatrixTransform
 from skimage.transform import FundamentalMatrixTransform
@@ -19,7 +19,7 @@ class Frame(object):
         self.kps = normalize(self.kinv, self._kps)
         self.pts = [None]*len(self.kps)
         self.pose = np.eye(4)
-        self.kd = KDTree(self._kps)
+        self.kd = cKDTree(self._kps)
         self.id = len(img_map.frames)
 
         img_map.frames.append(self)
