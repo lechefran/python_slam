@@ -116,10 +116,14 @@ def process_frame(img):
         u1, u2 = denormalize(K, pt1)
         v1, v2 = denormalize(K, pt2)
 
+        # create circles, improve coloring
         if frame1.pts[i1] is not None:
-            cv2.circle(img, (u1, u2), color = (0, 255, 0), radius = 3)
+            if len(frame1.pts[i1]) >= 5:
+                cv2.circle(img, (u1, u2), color = (0, 255, 0), radius = 3)
+            else:
+                cv2.circle(img, (u1, u2), color = (0, 128, 0), radius = 3)
         else:
-            cv2.circle(img, (u1, u2), color = (0, 0, 255), radius = 3)
+            cv2.circle(img, (u1, u2), color = (0, 0, 0), radius = 3)
         cv2.line(img, (u1, u2), (v1, v2), color = (255, 0, 255))
 
     if disp is not None:
