@@ -50,7 +50,7 @@ class Map(object):
 
     # class method to refresh the viewer based on the contents of the queue
     def viewer_refresh(self, queue):
-        if not queue.empty():
+        while not queue.empty():
             self.state = queue.get()
 
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
@@ -161,7 +161,7 @@ class Map(object):
                     new_points.append(p)
                     continue
                 estimate = vert.estimate()
-                old_point = len(p.frames) == 2 and p.frames[-1] not in local_frames
+                old_point = len(p.frames) <= 2 and p.frames[-1] not in local_frames
 
                 # try and computer the reprojection error of the point
                 errors = []

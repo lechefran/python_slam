@@ -45,8 +45,6 @@ def process_frame(img):
     if frame.id == 0:
         return
 
-     # print("\n*** frame %d ***" % (frame.id))
-
     frame1 = map3d.frames[-1]
     frame2 = map3d.frames[-2]
     idx1, idx2, rt = match(frame1, frame2)
@@ -81,10 +79,12 @@ def process_frame(img):
             queue = frame1.kd.query_ball_point(projs[i], 5)
             for q in queue:
                 if frame1.pts[q] is None:
-                    o_dist = hamming_distance(p.orb(), frame1.des[q])
-                    if o_dist < 32.0:
-                        p.add_observation(frame1, q)
-                        projection_pts_count += 1
+                    for o in p.orb():
+                        o_dist = hamming_distance(o, frame1.des[q])
+                        if o_dist < 32.0:
+                            p.add_observation(frame1, q)
+                            projection_pts_count += 1
+                            break
 
     good_pts3d = np.array([frame1.pts[i] is None for i in idx1])
     pts3d = triangulate(frame1.pose, frame2.pose, frame1.kps[idx1], frame2.kps[idx2])
@@ -110,7 +110,7 @@ def process_frame(img):
         pt.add_observation(frame2, idx2[i])
 
     # for pt1, pt2 in ret_val:
-    for i1, i2 in zip(frame1.kps[idx1], frame2.kps[idx2]):
+    for i1, i2 in zip(idx1, idx2):
         pt1 = frame1.kps[i1]
         pt2 = frame2.kps[i2]
         u1, u2 = denormalize(K, pt1)
@@ -118,7 +118,7 @@ def process_frame(img):
 
         # create circles, improve coloring
         if frame1.pts[i1] is not None:
-            if len(frame1.pts[i1]) >= 5:
+            if len(frame1.pts[i1].frames) >= 5:
                 cv2.circle(img, (u1, u2), color = (0, 255, 0), radius = 3)
             else:
                 cv2.circle(img, (u1, u2), color = (0, 128, 0), radius = 3)
@@ -156,10 +156,12 @@ if __name__ == "__main__":
     W = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
     H = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
     F = float(os.getenv("F", "525"))
+    CNT = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
     K = np.array([[F, 0, W//2], [0, F, H//2], [0, 0, 1]])
     Kinv = np.linalg.inv(K)
 
-    map3d.create_viewer()
+    if os.getenv("SEEK") is not None:
+        video.set(cv2.CAP_PROP_POS_FRAMES, int(os.getenv("SEEK")))
 
     if W > 1024:
         downscale = 1024.0/W
@@ -170,12 +172,14 @@ if __name__ == "__main__":
 
     disp = Display2D("Display Window", W, H) # 2d display window
 
+    i= 0
     while (video.isOpened()):
         ret, frame = video.read()
         if ret == True:
             process_frame(frame)
         else:
             break
+        i += 1
 
     video.release()
     cv2.destroyAllWindows()

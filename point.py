@@ -14,8 +14,10 @@ class Point(object):
         img_map.points.append(self)
 
     def orb(self):
-        frames = self.frames[-1]
-        return frames.des[frames.pts.index(self)]
+        des = []
+        for f in self.frames:
+            des.append(f.des[f.pts.index(self)])
+        return des
 
     # class method to add a frame and index from video
     # feed to the Point object
