@@ -165,7 +165,7 @@ class Map(object):
 
                 # try and computer the reprojection error of the point
                 errors = []
-                for f in p.frames:
+                for f in p.frames:g
                     uv = f._kps[f.pts.index(p)]
                     proj = np.dot(np.dot(f.k, f.pose[:3]),
                            np.array([estimate[0], estimate[1], estimate[2], 1.0]))
