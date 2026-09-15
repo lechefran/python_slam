@@ -1,5 +1,8 @@
 ## Python SLAM    
 This is a simple, evolving simultaneous localization and mapping program.
+
+See [the detailed SLAM improvement TODO](TODO.md) for the current implementation review, prioritized changes, validation criteria, and dashcam benchmarking protocol.
+
 This project is currently being developed using Python 3.x on Ubuntu 18.04 operating system. The program is now currently in the 3D map display
 and graph optimization stage with well coordinated and improved 3D map display as a future goal of the project.
 

@@ -9,3 +9,34 @@ Pangolin
 misc
 debug.txt
 lib
+
+# Local Python environments and caches
+.venv/
+venv/
+env/
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.py[cod]
+*.egg-info/
+
+# Local environment configuration (keep example files shareable)
+.env
+.env.*
+!.env.example
+!.env.sample
+.python-version
+.direnv/
+
+# Local editor, OS, and agent setup
+.DS_Store
+.idea/
+.vscode/
+/.agents/
+/.codex/
+/AGENTS.md
+
+# Generated runs and local video inputs
+/output/
+/sample_videos/
