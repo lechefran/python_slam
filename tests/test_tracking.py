@@ -40,7 +40,13 @@ def test_blank_frame_after_initialization_does_not_change_map(scene):
     tracker.reference = mapping.frames[-1]
     old_frames = list(mapping.frames)
     old_points = list(mapping.points)
-    _, result = tracker.process(np.zeros((480, 640, 3), np.uint8), 3, .1)
+    _, result = tracker.process(np.zeros((480, 640, 3), np.uint8), 3, .1,
+                                diagnostics=True, capture_trace=True)
     assert result.status == 'lost'
+    assert result.diagnostics['failure_stage'] == 'provisional_pnp'
+    assert result.diagnostics['stages']['provisional_pnp']['input_count'] == 0
+    assert result.diagnostics['stages']['provisional_pnp']['gate'] == 'correspondence_count'
+    assert 'final_pnp' not in result.diagnostics['stages']
+    assert tracker.last_trace['provisional_pnp']['pixels'] == []
     assert mapping.frames == old_frames and mapping.points == old_points
     mapping.check_integrity()

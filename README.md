@@ -84,9 +84,13 @@ Run `.venv/bin/python slam.py --help` for the complete interface. The installed 
 | `--focal F` | Approximate focal length in source pixels when calibration is absent |
 | `--calibration FILE` | Validated pinhole calibration input |
 | `--features N` | ORB feature cap (default 2000) |
+| `--condition-pnp` / `--no-condition-pnp` | Centered pose fitting with bounded consensus refits is enabled by default; disable for the legacy reference |
 | `--mask-bottom FRACTION` | Optional fixed exclusion mask for hood/dashboard; default 0 |
 | `--seed N`, `--threads N` | OpenCV random seed and worker count; defaults 0 and 1 |
 | `--report FILE` | JSON environment/configuration, input hashes, frame outcomes, BA results and accepted `T_cw` poses |
+| `--diagnostics-dir DIR` | New directory for sampled tracking overlays and numeric evidence; use with `--report` |
+| `--diagnostics-start N`, `--diagnostics-end N` | Inclusive source-frame capture window (defaults 850–1,000); does not skip warm-up frames |
+| `--diagnostics-every N` | Sample every N frames within the window; also capture status transitions and the final frame |
 | `--hold` | Keep the desktop view open at the end |
 
 `F` and `SEEK` provide legacy defaults overridden by explicit CLI options. `REVERSE` is ignored with a notice: translation sign comes from two-view cheirality.
@@ -94,6 +98,22 @@ Run `.venv/bin/python slam.py --help` for the complete interface. The installed 
 Frames are reported as `initializing`, `initialized`, `tracking`, or `lost`. Only accepted poses are inserted into the map; the initialization reference is also retained once the initial pair succeeds. After loss the tracker retries the last accepted view; there is no place-recognition recovery or silent restart into a different scale. Inspect `states` and `pose_coverage` in reports, not only exit status.
 
 Exit codes: **0** means processing completed/was closed and a map was initialized (tracking gaps may exist); **1** means processing failed; **2** means invalid arguments or no map initialized; **130** means interrupted. GUI hold/pause time is included in total wall time; per-frame processing excludes decoding, resizing/rectification, and rendering. Do not label either number alone as real-time SLAM throughput.
+
+## Diagnose tracking loss
+
+From the repository root, replay the dashcam from frame zero and inspect frames 850–1,000:
+
+```sh
+.venv-portability/bin/python -m scripts.benchmark_tracking output/tracking-investigation
+```
+
+Use `.venv/bin/python` instead if that is your installed environment. The output directory must be new. The command records input/configuration identities, source hashes, all frame results, a focus-window CSV and summary, and sampled PNG/JSON evidence. Add `--baseline output/runtime-repair/dashcam-full.json` when that local earlier report exists. Diagnostics observe the existing estimators; failed candidate poses stay outside the accepted trajectory.
+
+See [tracking investigation](docs/tracking-diagnostics.md) for reproduction, evidence definitions, measured findings, and remaining uncertainty.
+
+PnP refinement now validates its initial and refined hypotheses and can try one VVS fallback when LM fails or worsens the candidate cost. See [pose-refinement behavior and evidence](docs/pose-refinement.md); coverage and residual acceptance thresholds remain unchanged.
+
+[Numerical conditioning](docs/numerical-conditioning.md) documents default centered fitting, seed recovery and consensus refits. The requested full dashcam replay retains all 1,180 baseline accepted frame IDs and adds 505, reaching 1,685 poses. This measures coverage, with real-road accuracy still unqualified.
 
 ## Linux container and CI
 

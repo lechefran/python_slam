@@ -1,5 +1,9 @@
 # Runtime repair and platform validation
 
+These are the initial runtime-repair results. The subsequent [pose-refinement correction](pose-refinement.md) records the current 26-test validation and full-video comparison (1,180 accepted poses); sustained tracking loss and Linux execution remain unresolved.
+
+The later [numerical-conditioning work](numerical-conditioning.md) enables centered fitting with validated consensus refits by default. Its full dashcam replay retains all 1,180 baseline accepted frame IDs and adds 505. Current validation and remaining platform/accuracy limits are recorded in that report; the runtime measurements below remain historical.
+
 ## Supported installation target
 
 The application is pure Python around native NumPy/OpenCV/SciPy/g2opy wheels. It no longer imports legacy `g2o`, SDL, Pangolin or PyOpenGL. GUI code is optional and uses Matplotlib in the main thread.

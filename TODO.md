@@ -10,6 +10,42 @@ Implemented work includes parser/import/API repairs, optional visualization, res
 
 The detailed findings and line numbers below preserve the **pre-repair review snapshot**, not the present source. The unchecked items describe their full acceptance scope; many are only partially addressed by this first repair. In particular, real calibration/accuracy, sustained-loss recovery, long-run resource budgets, 2D mapping and MAP-08 point-data interchange remain pending. Consult the repair notes before treating an old defect description as still reproducible.
 
+## Tracking investigation update
+
+The next diagnostic pass is implemented: [reproduction and findings](docs/tracking-diagnostics.md). It replays from frame zero, retains per-stage evidence on failed frames, exports sampled filtering overlays/numeric snapshots, and compares the focus window against the prior baseline.
+
+- [x] Reproduce frames 850–1,000 with the accumulated map: all 1,001 prefix outcomes/counts matched the prior dashcam run.
+- [x] Identify rejection stages: frame 923 retains 123 geometric inliers but fails vertical image coverage (9.33% versus 10% required).
+- [x] Trace sustained loss: frame 941 loses spatial support during final PnP refinement; after frame 940 remains the last accepted reference, all projection candidates expire at frame 971.
+- [x] Add an independent thin-band synthetic regression and verify diagnostics preserve synthetic native-optimized poses exactly.
+- [ ] Improve spatially distributed, static-scene pose support and investigate refinement sensitivity; measure results without relaxing safeguards solely to increase pose counts.
+- [ ] Add geometrically validated recovery that can search useful accepted keyframes/landmarks beyond the normal 30-frame projection-recency window.
+
+This is partial progress on CAM-08 and QA-02. Upstream calibration/dynamic-object causes, recovery behavior, held-out accuracy and the full QA protocol remain unresolved.
+
+## Pose refinement update
+
+The [frame-941 correction](docs/pose-refinement.md) validates returned PnP poses independently of RANSAC masks, checks LM updates against fixed-input geometric support/cost, and tries one VVS refinement when needed. The original 96 RANSAC rows supported only 33 points under the returned pose; LM reached 59, and VVS reaches 97 on the same saved inputs while passing the unchanged coverage gate.
+
+- [x] Preserve independent seed copies, reject invalid/native-failed candidates, and record which validated candidate is selected.
+- [x] Add native frame-941 regression data and synthetic tests for failure isolation, cost regression and actual-pose validation.
+- [x] Replay from frame zero: losses in frames 850–1,000 decrease from 65 to 4, with an earlier isolated failure at 892 explicitly retained as a regression.
+- [x] Complete the full 1,800-frame comparison: 1,180 accepted poses versus 932; tracking ends at frame 1,198 instead of 940. Later loss, increased wall time and unqualified accuracy remain documented limitations. All 26 tests pass.
+- [x] Implement local coordinate centring/scaling with origin/scale-invariance tests across PnP and world-pose conversion; now enabled by default with bounded consensus refinement.
+- [x] Restore baseline dashcam coverage with centering: recover rejected seeds on their existing RANSAC rows, then refit validated consensus at most twice under unchanged gates. The full replay retains every one of the 1,180 baseline accepted frame IDs and adds 505, totaling 1,685.
+- [ ] Extend conditioning qualification to calibrated, held-out sequences and native Linux execution; the supplied development clip does not establish trajectory accuracy.
+- [ ] Evaluate spatial/static-scene weighting and robust refinement losses on labelled and held-out data; the candidate cost cap is not an optimizer loss or a covariance estimate.
+
+The 30-frame projection expiry and broader recovery work remain unchanged. Full details and qualification limits are in the linked correction report.
+
+## Numerical conditioning update
+
+[Implementation and evidence](docs/numerical-conditioning.md) cover a centered/isotropically scaled solver frame through RANSAC, LM, VVS and bounded SQPnP seed recovery, with world-pose conversion before acceptance. Synthetic origin/scale cases preserve all 108 true inlier rows. Inputs and map coordinates retain their contracts; unrepresentable/non-finite inputs fail before native fitting.
+
+The first centered experiment regressed to 954 poses. The correction addresses stale consensus: reproject all original observations, refit the validated rows at most twice, and accept only lower full-input capped cost under the existing depth, residual and coverage gates. A rejected primary fit can receive one independent SQPnP seed using the same RANSAC mask. Both changes run in centered coordinates.
+
+**Centering is now the default.** The full requested dashcam replay reaches 1,685 accepted poses, retains **every** baseline accepted frame ID, adds 505, and extends the last accepted frame from 1,198 to 1,709. There are 111 lost frames; real-road accuracy and Linux execution remain unqualified. `--no-condition-pnp` retains the previous solver path for comparisons. See the linked report for fixed-input regressions, diagnostic fields, validation and remaining limitations.
+
 ## Purpose and scope
 
 Improve this small Python monocular SLAM application in four connected areas: camera positioning, feature/landmark and graph-edge calculations, 2D mapping, and 3D mapping. Correctness, measured accuracy, usable operation, and sustained performance take precedence over adding algorithms.

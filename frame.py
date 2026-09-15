@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 from scipy.spatial import cKDTree
 
-from geometry import add_one, denormalize, normalize, pose_rt, valid_pose
+from geometry import ConditionedPoints, add_one, condition_points, denormalize, normalize, pose_rt, valid_pose
 
 
 class TrackingError(RuntimeError):
@@ -41,13 +41,20 @@ def extract(img, detector=None, mask=None):
     return pixels, descriptors
 
 
-def match_features(current, previous):
+def match_features(current, previous, diagnostics=None):
     """Return unique current/previous feature indices after binary descriptor gates."""
+    if diagnostics is not None:
+        diagnostics.update(query_features=len(current.des), train_features=len(previous.des),
+                           knn_pairs=0, ratio_pass=0, distance_pass=0, unique_matches=0)
     if len(current.des) == 0 or len(previous.des) < 2:
         return np.empty(0, dtype=int), np.empty(0, dtype=int)
     pairs = cv2.BFMatcher(cv2.NORM_HAMMING).knnMatch(current.des, previous.des, k=2)
     candidates = [pair[0] for pair in pairs if len(pair) == 2
                   and pair[0].distance < 0.75 * pair[1].distance and pair[0].distance < 64]
+    if diagnostics is not None:
+        diagnostics.update(knn_pairs=sum(len(pair) == 2 for pair in pairs),
+                           ratio_pass=sum(len(pair) == 2 and pair[0].distance < 0.75 * pair[1].distance for pair in pairs),
+                           distance_pass=len(candidates))
     # Resolve competing matches by descriptor evidence, not incidental feature order.
     candidates.sort(key=lambda item: (item.distance, item.queryIdx, item.trainIdx))
     used = set()
@@ -57,6 +64,8 @@ def match_features(current, previous):
             used.add(item.trainIdx)
             accepted.append((item.queryIdx, item.trainIdx))
     indices = np.array(accepted, dtype=int).reshape(-1, 2)
+    if diagnostics is not None:
+        diagnostics['unique_matches'] = len(indices)
     return indices[:, 0], indices[:, 1]
 
 
@@ -93,30 +102,268 @@ def match(current, previous):
     return i[good], j[good], pose
 
 
-def estimate_pose(frame, points, indices, max_error=3.0, require_coverage=True):
+def _pose_candidate(frame, xyz, pixels, rotation, translation, max_error, require_coverage):
+    """Check one T_cw hypothesis against the same complete set of pixel observations.
+
+    The RANSAC row mask is not a substitute for projecting its returned pose.
+    Capped squared error gives every candidate the same scoring population;
+    invalid depth costs the full cap instead of disappearing from the score.
+    """
+    from geometry import project
+    from tracking_diagnostics import residual_summary
+
+    finite = np.isfinite(rotation).all() and np.isfinite(translation).all()
+    pose = pose_rt(cv2.Rodrigues(rotation)[0], translation) if finite else None
+    valid = pose is not None and bool(valid_pose(pose))
+    projected = np.full((len(xyz), 2), np.nan)
+    visible = np.zeros(len(xyz), dtype=bool)
+    if valid:
+        projected, _, visible = project(frame.k, pose, xyz)
+    errors = np.linalg.norm(projected - pixels, axis=1)
+    selected = np.flatnonzero(visible & (errors <= max_error))
+    spans = np.ptp(pixels[selected], axis=0) if len(selected) else np.zeros(2)
+    fractions = spans / [frame.w, frame.h]
+    score = np.full(len(xyz), max_error ** 2)
+    score[visible] = np.minimum(errors[visible], max_error) ** 2
+    gate = ('refined_pose' if not valid or len(selected) < 12 else
+            'image_coverage' if require_coverage and np.any(fractions < .1) else 'accepted')
+    metrics = {'status': 'accepted' if gate == 'accepted' else 'rejected', 'gate': gate,
+        'pose_valid': valid, 'refined_inliers': len(selected), 'positive_depth': int(visible.sum()),
+        'span_px': spans.tolist(), 'span_fraction': fractions.tolist(),
+        'inlier_bounds_px': [pixels[selected].min(axis=0).tolist(), pixels[selected].max(axis=0).tolist()]
+                           if len(selected) else None,
+        'all_residual_px': residual_summary(errors), 'inlier_residual_px': residual_summary(errors[selected]),
+        'clipped_cost_px2': float(score.sum())}
+    return {'pose': pose, 'projected': projected, 'rows': selected, 'metrics': metrics}
+
+
+def _solver_points(xyz, condition):
+    """Validate XYZ and choose centred solver coordinates or the legacy reference."""
+    conditioned = condition_points(xyz)
+    if condition:
+        return conditioned
+    return ConditionedPoints(np.ascontiguousarray(xyz), np.zeros(3), 1., method='none')
+
+
+def refine_pose(frame, xyz, pixels, rotation, translation, ransac_rows, max_error=3.,
+                require_coverage=True, condition=True):
+    """Refine a world-coordinate seed, optionally in a centred/scaled solver frame.
+
+    This entry point retains its world-coordinate contract for callers with an
+    existing pose. The RANSAC path enters the local helper directly so its seed
+    never makes an unnecessary world/local round trip before refinement.
+    """
+    conditioning = _solver_points(xyz, condition)
+    local_translation = conditioning.local_translation(cv2.Rodrigues(rotation)[0], translation)
+    return _refine_conditioned_pose(frame, xyz, pixels, conditioning, rotation,
+                                    local_translation, ransac_rows, max_error, require_coverage)
+
+
+def _refine_conditioned_pose(frame, xyz, pixels, conditioning, rotation, translation,
+                             ransac_rows, max_error, require_coverage):
+    """Refit validated consensus at most twice, scoring every original observation.
+
+    The native RANSAC mask belongs to an earlier hypothesis. After refinement,
+    some of its rows may be outliers and other input rows may now agree. Refit
+    that measured support, accepting only a strictly lower capped pixel cost
+    under the unchanged physical and spatial gates. The cap scores proposals;
+    each native refiner still minimizes ordinary squared error on its subset.
+    """
+    candidate, evidence, candidates = _recover_conditioned_pose(
+        frame, xyz, pixels, conditioning, rotation, translation, ransac_rows,
+        max_error, require_coverage)
+    consensus = {'attempted_rounds': 0, 'accepted_rounds': 0, 'rounds': [],
+                 'stop_reason': 'primary_rejected' if evidence['selected'] is None else 'disabled'}
+    evidence['consensus'] = consensus
+    if evidence['selected'] is None or conditioning.method == 'none':
+        return candidate, evidence, candidates
+
+    previous_rows = ransac_rows
+    for step in range(2):
+        rows = candidate['rows']
+        if np.array_equal(rows, np.sort(previous_rows)):
+            consensus['stop_reason'] = 'stable_support'
+            break
+        previous_rows = rows
+        # The checked T_cw is the public pose contract. Convert its translation
+        # back to the temporary solver frame before refining the new subset.
+        pose = candidate['pose']
+        rvec = cv2.Rodrigues(pose[:3, :3])[0]
+        tvec = conditioning.local_translation(pose[:3, :3], pose[:3, 3])
+        proposed, refinement, proposals = _refine_seed_pose(
+            frame, xyz, pixels, conditioning, rvec, tvec, rows, max_error, require_coverage)
+        prefix = f'consensus{step}_'
+        candidates.update({prefix + name: value for name, value in proposals.items()})
+        consensus['attempted_rounds'] += 1
+        improved = (refinement['selected'] is not None and
+                    proposed['metrics']['clipped_cost_px2'] < candidate['metrics']['clipped_cost_px2'])
+        consensus['rounds'].append({'input_count': len(rows), 'accepted': improved,
+            'before_cost_px2': candidate['metrics']['clipped_cost_px2'],
+            'proposed_cost_px2': proposed['metrics']['clipped_cost_px2'],
+            'refinement_reason': refinement['reason']})
+        if not improved:
+            consensus['stop_reason'] = 'refit_rejected' if refinement['selected'] is None else 'cost_not_improved'
+            break
+        candidate = proposed
+        evidence.update(selected=prefix + refinement['selected'], inspected=prefix + refinement['inspected'])
+        consensus['accepted_rounds'] += 1
+    else:
+        consensus['stop_reason'] = 'round_limit'
+    evidence['candidates'] = {name: item['metrics'] for name, item in candidates.items()}
+    return candidate, evidence, candidates
+
+
+def _recover_conditioned_pose(frame, xyz, pixels, conditioning, rotation, translation,
+                              ransac_rows, max_error, require_coverage):
+    """Recover a failed centred fit with one independent seed on the same mask.
+
+    EPnP's all-inlier fit can lose the hypothesis that produced its RANSAC mask.
+    Local refiners may stay in that bad basin. SQPnP supplies a new starting
+    pose, using only those same rows and the same centred coordinate system.
+    Every proposal still faces the original world-depth/pixel/coverage checks.
+    """
+    arguments = (frame, xyz, pixels, conditioning)
+    tail = (ransac_rows, max_error, require_coverage)
+    candidate, evidence, candidates = _refine_seed_pose(
+        *arguments, rotation, translation, *tail)
+    recovery = {'attempted': False, 'reason': 'primary_validated' if evidence['selected'] else 'disabled'}
+    evidence['seed_recovery'] = recovery
+    if evidence['selected'] is not None or conditioning.method == 'none':
+        return candidate, evidence, candidates
+
+    recovery.update(attempted=True, reason='primary_rejected', solver='SQPNP',
+                    input_count=len(ransac_rows))
+    try:
+        ok, new_rotation, new_translation = cv2.solvePnP(
+            conditioning.points[ransac_rows], pixels[ransac_rows], frame.k, None,
+            flags=cv2.SOLVEPNP_SQPNP)
+    except cv2.error as exc:
+        recovery.update(status='failed', native_error=str(exc))
+        return candidate, evidence, candidates
+    if not ok:
+        recovery['status'] = 'failed'
+        return candidate, evidence, candidates
+
+    recovered, alternative, alternatives = _refine_seed_pose(
+        *arguments, new_rotation, new_translation, *tail)
+    # Keep both attempts visible; a rejected recovery must not erase the reason
+    # the original pose failed. All trace poses remain world-to-camera.
+    names = {name: 'sqpnp_pose' if name == 'ransac_pose' else 'sqpnp_' + name
+             for name in alternatives}
+    candidates.update({names[name]: value for name, value in alternatives.items()})
+    recovery['status'] = 'accepted' if alternative['selected'] else 'rejected'
+    if alternative['selected'] is not None:
+        candidate = recovered
+        evidence.update(selected=names[alternative['selected']], inspected=names[alternative['inspected']])
+    evidence['candidates'] = {name: item['metrics'] for name, item in candidates.items()}
+    return candidate, evidence, candidates
+
+
+def _refine_seed_pose(frame, xyz, pixels, conditioning, rotation, translation,
+                      ransac_rows, max_error, require_coverage):
+    """Try LM once, with one VVS fallback if LM fails validation or worsens cost.
+
+    All native XYZ/tvec inputs share the same local coordinates. Each returned
+    candidate is converted back to world coordinates before the unchanged depth,
+    pixel-error and coverage checks. OpenCV may mutate its seed arrays in place.
+    """
+    def world_candidate(rvec, local_tvec):
+        if np.isfinite(rvec).all() and np.isfinite(local_tvec).all():
+            with np.errstate(over='ignore', invalid='ignore'):
+                world_tvec = conditioning.world_translation(cv2.Rodrigues(rvec)[0], local_tvec)
+        else:
+            world_tvec = np.full((3, 1), np.nan)
+        return _pose_candidate(frame, xyz, pixels, rvec, world_tvec, max_error, require_coverage)
+
+    candidates = {'ransac_pose': world_candidate(rotation, translation)}
+
+    def attempt(name, solver):
+        try:
+            rvec, tvec = solver(conditioning.points[ransac_rows], pixels[ransac_rows], frame.k, None,
+                               rotation.copy(), translation.copy())
+            candidate = world_candidate(rvec, tvec)
+        except cv2.error as exc:
+            # A local refinement failure must not overwrite an independently
+            # validated candidate or masquerade as a successfully refined pose.
+            candidate = _pose_candidate(frame, xyz, pixels, np.full((3, 1), np.nan),
+                                        np.full((3, 1), np.nan), max_error, require_coverage)
+            candidate['metrics']['native_error'] = str(exc)
+        candidates[name] = candidate
+        return candidate['metrics']
+
+    initial = candidates['ransac_pose']['metrics']
+    lm = attempt('lm', cv2.solvePnPRefineLM)
+    tolerance = max(1e-8, 1e-6 * initial['clipped_cost_px2'])
+    reason = ('lm_rejected_' + lm['gate'] if lm['status'] != 'accepted' else
+              'lm_increased_cost' if initial['status'] == 'accepted'
+              and lm['clipped_cost_px2'] > initial['clipped_cost_px2'] + tolerance else 'lm_validated')
+    fallback = reason != 'lm_validated'
+    if fallback:
+        attempt('vvs', cv2.solvePnPRefineVVS)
+    eligible = [name for name, candidate in candidates.items()
+                if candidate['metrics']['status'] == 'accepted']
+    if not fallback:
+        selected = 'lm'
+    else:
+        selected = min(eligible, key=lambda name: candidates[name]['metrics']['clipped_cost_px2']) if eligible else None
+    # Preserve a useful rejected hypothesis for diagnostics even when no pose is
+    # eligible. The caller raises TrackingError before this can reach the map.
+    inspected = selected or min(candidates, key=lambda name: candidates[name]['metrics']['clipped_cost_px2'])
+    return candidates[inspected], {'selected': selected, 'inspected': inspected,
+        'fallback_attempted': fallback, 'reason': reason,
+        'conditioning': conditioning.metadata(),
+        'candidates': {name: candidate['metrics'] for name, candidate in candidates.items()}}, candidates
+
+
+def estimate_pose(frame, points, indices, max_error=3.0, require_coverage=True,
+                  diagnostics=None, trace=None, condition=True):
     """Robust 3D-to-2D pose in map scale; return T_cw and accepted input rows."""
     xyz = np.asarray([point.point for point in points], dtype=np.float64).reshape(-1, 3)
     pixels = np.asarray(frame._kps[indices], dtype=np.float64)
+    # Observe the existing solver once, including partial evidence on rejection.
+    # Input rows always refer to the same world XYZ and processed-image pixels.
+    if diagnostics is not None:
+        diagnostics.update(status='rejected', gate='correspondence_count', input_count=len(xyz),
+                           ransac_inliers=0, refined_inliers=0, positive_depth=0,
+                           coverage_required=require_coverage, max_error_px=max_error)
+    if trace is not None:
+        trace.update(xyz=xyz.tolist(), pixels=pixels.tolist(), feature_indices=list(map(int, indices)),
+                     landmark_ids=[int(p.id) for p in points], ransac_rows=[], refined_rows=[])
     if len(xyz) < 12:
         raise TrackingError('fewer than twelve map correspondences')
+    if diagnostics is not None:
+        diagnostics['gate'] = 'conditioning'
+    try:
+        conditioning = _solver_points(xyz, condition)
+    except ValueError as exc:
+        raise TrackingError(str(exc)) from exc
+    if not np.isfinite(pixels).all():
+        raise TrackingError('Pose fitting requires finite pixel observations')
+    if diagnostics is not None:
+        diagnostics['conditioning'] = conditioning.metadata()
     ok, rotation, translation, inliers = cv2.solvePnPRansac(
-        xyz, pixels, frame.k, None, iterationsCount=200, reprojectionError=max_error,
+        conditioning.points, pixels, frame.k, None, iterationsCount=200, reprojectionError=max_error,
         confidence=0.999, flags=cv2.SOLVEPNP_EPNP)
+    if diagnostics is not None:
+        diagnostics.update(gate='ransac_support', ransac_inliers=0 if inliers is None else len(inliers))
+    if trace is not None and inliers is not None:
+        trace['ransac_rows'] = inliers.ravel().tolist()
     if not ok or inliers is None or len(inliers) < 12:
         raise TrackingError('insufficient PnP inliers')
-    selected = inliers.ravel()
-    # Refine only robust inliers in pixel units. PnP returns world-to-camera,
-    # which already agrees with the internal pose convention.
-    rotation, translation = cv2.solvePnPRefineLM(xyz[selected], pixels[selected], frame.k, None, rotation, translation)
-    pose = pose_rt(cv2.Rodrigues(rotation)[0], translation)
-    from geometry import project
-    projected, _, visible = project(frame.k, pose, xyz)
-    good = visible & (np.linalg.norm(projected - pixels, axis=1) <= max_error)
-    selected = np.flatnonzero(good)
-    if not valid_pose(pose) or len(selected) < 12:
+    candidate, refinement, candidates = _refine_conditioned_pose(frame, xyz, pixels, conditioning,
+        rotation, translation, inliers.ravel(), max_error, require_coverage)
+    pose, selected, metrics = candidate['pose'], candidate['rows'], candidate['metrics']
+    if diagnostics is not None:
+        diagnostics.update(metrics, refinement=refinement)
+    if trace is not None:
+        trace.update(T_cw=pose.tolist() if pose is not None else None, refined_rows=selected.tolist(),
+                     projected_pixels=candidate['projected'].tolist(),
+                     refinement={name: {'T_cw': item['pose'].tolist() if item['pose'] is not None else None,
+                                        'rows': item['rows'].tolist()} for name, item in candidates.items()})
+    if metrics['gate'] == 'refined_pose':
         raise TrackingError('invalid refined PnP pose')
-    # Matches confined to a tiny patch cannot reliably constrain the full camera.
-    spans = np.ptp(pixels[selected], axis=0)
-    if require_coverage and (spans[0] < 0.1 * frame.w or spans[1] < 0.1 * frame.h):
+    if metrics['gate'] == 'image_coverage':
         raise TrackingError('map inliers have insufficient image coverage')
+    if diagnostics is not None:
+        diagnostics.update(status='accepted', gate='accepted')
     return pose, selected

@@ -1,6 +1,66 @@
 """Pure camera geometry. Poses map world coordinates into the camera (T_cw)."""
 
 import numpy as np
+from dataclasses import dataclass
+
+
+@dataclass
+class ConditionedPoints:
+    """Temporary isotropic coordinates for a native pose solver, not a new map.
+
+    X_local = (X_world - centre) / scale. Rotations are unchanged; translations
+    must be converted because camera coordinates also scale by this positive s.
+    """
+
+    points: np.ndarray
+    centre: np.ndarray
+    scale: float
+    method: str = 'centred_rms_radius'
+
+    def world_translation(self, rotation, local_translation):
+        """Convert t_local to t_world = s*t_local - R*centre, shape (3,1)."""
+        return (self.scale * np.asarray(local_translation).reshape(3)
+                - rotation @ self.centre).reshape(3, 1)
+
+    def local_translation(self, rotation, world_translation):
+        """Convert a world-to-camera seed to the centred/scaled solver frame."""
+        return ((rotation @ self.centre + np.asarray(world_translation).reshape(3))
+                / self.scale).reshape(3, 1)
+
+    def metadata(self):
+        return {'method': self.method, 'centre_world': self.centre.tolist(),
+                'scale_world': self.scale, 'solver_coordinates': '(X_world - centre_world) / scale_world'}
+
+
+def condition_points(points):
+    """Centre finite world XYZ (N,3) and give it unit RMS distance from centre.
+
+    Use an anchor and scaled offsets to avoid summing large world coordinates
+    or squaring their absolute magnitudes. Keep one isotropic scale so this
+    remains a camera similarity transform; per-axis whitening would change rays.
+    """
+    points = np.asarray(points, dtype=np.float64)
+    if points.ndim != 2 or points.shape[1] != 3 or not len(points) or not np.isfinite(points).all():
+        raise ValueError('Pose conditioning requires finite, nonempty world XYZ (N,3)')
+    with np.errstate(over='ignore', invalid='ignore', under='ignore'):
+        offsets = points - points[0]
+        extent = np.max(np.abs(offsets))
+        if not np.isfinite(extent):
+            raise ValueError('World coordinate span exceeds floating-point range')
+        if extent == 0:
+            raise ValueError('Coincident world points have no usable scale for pose fitting')
+        centre = points[0] + extent * np.mean(offsets / extent, axis=0)
+        centred = points - centre
+        radius = np.max(np.abs(centred))
+        if not np.isfinite(radius) or radius == 0:
+            raise ValueError('World point spread cannot be represented for pose fitting')
+        scale = float(radius * np.sqrt(np.mean(np.sum((centred / radius) ** 2, axis=1))))
+        if not np.isfinite(scale) or scale <= 0:
+            raise ValueError('World point scale cannot be represented for pose fitting')
+        local = np.ascontiguousarray(centred / scale)
+    if not np.isfinite(local).all():
+        raise ValueError('Conditioned world points are non-finite')
+    return ConditionedPoints(local, centre, scale)
 
 
 def pose_rt(rotation, translation):
