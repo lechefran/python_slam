@@ -2,15 +2,23 @@
 
 Detailed implementation review and development backlog, **2026-09-15**.
 
+## Runtime repair update
+
+The first repair pass now runs in the local macOS environment, including a clean dependency installation, native optimizer tests, a headless synthetic/video pipeline, and an observed native Matplotlib window. Setup, supported Linux targets, CI/container instructions, and precise validation limits are in [README.md](README.md) and [runtime validation](docs/runtime.md).
+
+Implemented work includes parser/import/API repairs, optional visualization, resized camera intrinsics, two-camera triangulation and cheirality checks, robust map-based PnP, reciprocal observations, guarded native BA and culling, CLI/reporting, and regression tests. The full requested dashcam run decoded 1,800 frames with 932 accepted poses; later tracking loss remains explicitly reported. Linux wheel resolution passed, but Linux execution and remote CI are not yet verified.
+
+The detailed findings and line numbers below preserve the **pre-repair review snapshot**, not the present source. The unchecked items describe their full acceptance scope; many are only partially addressed by this first repair. In particular, real calibration/accuracy, sustained-loss recovery, long-run resource budgets, 2D mapping and MAP-08 point-data interchange remain pending. Consult the repair notes before treating an old defect description as still reproducible.
+
 ## Purpose and scope
 
 Improve this small Python monocular SLAM application in four connected areas: camera positioning, feature/landmark and graph-edge calculations, 2D mapping, and 3D mapping. Correctness, measured accuracy, usable operation, and sustained performance take precedence over adding algorithms.
 
 This review covers the actual working-tree implementations of [slam.py](slam.py), [frame.py](frame.py), [point.py](point.py), [dmap.py](dmap.py), and [display.py](display.py), at base commit `5a58b6ed9b4df757f6632490db978ac3c944b933`, branch `improve-slam`. File/line references below describe this snapshot and will move as fixes land. Application source was not changed during the review.
 
-**Current status: the application does not run in the available environment.** It also contains independently reproducible mathematical and observation-bookkeeping defects. Establish a runnable, geometrically correct baseline before reporting trajectory accuracy or speed improvements.
+**Status at the initial review (superseded by the repair update above): the application did not run in the available environment.** It also contained independently reproducible mathematical and observation-bookkeeping defects. Establish a runnable, geometrically correct baseline before reporting trajectory accuracy or speed improvements.
 
-Local `AGENTS.md` describes a later macOS port, headless flags, dependency locks, and tests that are absent from this checkout. Here, the renderer is SDL/Pangolin; `tests/` and `scripts/` contain no Python source; the referenced `docs/macos.md`, `docs/priorities.md`, and dependency manifests are absent. Old generated files under `output/` are not evidence that this revision works.
+At that initial review, local `AGENTS.md` described a later macOS port, headless flags, dependency locks, and tests absent from the checkout. The renderer was SDL/Pangolin; `tests/` and `scripts/` contained no Python source; the referenced documentation and manifests were absent. Old generated files under `output/` were not evidence that the reviewed revision worked.
 
 ### Navigation
 

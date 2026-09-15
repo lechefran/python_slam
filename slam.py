@@ -1,185 +1,347 @@
 #!/usr/bin/env python3
+"""Sparse monocular SLAM: validated visual poses, native BA, optional desktop view."""
 
-# import system specific parameters and functions library to link g2o and
-# other additional files to this program
-import sys
+import argparse
+from collections import Counter
+from dataclasses import asdict, dataclass
+import hashlib
+import importlib.metadata
+import json
 import os
-import cv2
+from pathlib import Path
+import platform
+import sys
 import time
+
+import cv2
 import numpy as np
-from display import Display2D
-from frame import Frame, denormalize, match
+
 from dmap import Map
+from frame import Frame, TrackingError, estimate_pose, match_features, recover_relative
+from geometry import project, triangulate, triangulate_valid
 from point import Point
-import g2o # requires user to install additional requirements from readme
-from multiprocessing import Process, Queue
 
-map3d = Map() # 3d map object
-disp = None
 
-# function to triangulate a 2D point into 3D space
-def triangulate(pose1, pose2, pts1, pts2):
-    ret_val = np.zeros((pts1.shape[0], 4))
+def camera_parameters(width, height, focal=525.0, max_width=1024, calibration=None):
+    """Return processed (width,height), K and distortion for pinhole BGR input.
 
-    for i, j in enumerate(zip(pts1, pts2)):
-        temp = np.zeros((4, 4))
-        temp[0] = j[0][0] * pose1[2] - pose1[0]
-        temp[1] = j[0][1] * pose1[2] - pose1[1]
-        temp[2] = j[1][0] * pose1[2] - pose1[0]
-        temp[3] = j[1][1] * pose1[2] - pose1[1]
-        _, _, vt = np.linalg.svd(temp)
-        ret_val[i] = vt[3]
-
-    return ret_val
-
-def hamming_distance(a, b):
-    r = (1 << np.arange(8))[:, None]
-    return np.count_nonzero((np.bitwise_xor(a, b) & r) != 0)
-
-# function to process the image frame from the video: track and draw on
-# obtained features and display back including matches
-def process_frame(img):
-    start_time = time.time()
-    img = cv2.resize(img, (W, H))
-    frame = Frame(map3d, img, K)
-    if frame.id == 0:
-        return
-
-    frame1 = map3d.frames[-1]
-    frame2 = map3d.frames[-2]
-    idx1, idx2, rt = match(frame1, frame2)
-
-    if frame.id < 5:
-        frame1.pose = np.dot(rt, frame2.pose)
+    Fallback focal is in source pixels. K uses proportional pixel-coordinate
+    scaling; actual integer output dimensions determine sx and sy independently.
+    """
+    if width <= 0 or height <= 0 or max_width <= 0 or not np.isfinite(focal) or focal <= 0:
+        raise ValueError('Image dimensions, width limit, and focal length must be positive')
+    distortion = np.zeros(5)
+    if calibration is None:
+        k = np.array([[focal, 0, width / 2], [0, focal, height / 2], [0, 0, 1.0]])
     else:
-        velocity = np.dot(frame2.pose, np.linalg.inv(map3d.frames[-3].pose))
-        frame1.pose = np.dot(velocity, frame2.pose)
+        if calibration.get('model') != 'pinhole':
+            raise ValueError('Only pinhole calibration is supported; rectify other lens models externally')
+        if calibration.get('width') != width or calibration.get('height') != height:
+            raise ValueError('Calibration dimensions do not match the decoded source image')
+        k = np.asarray(calibration.get('K'), dtype=float)
+        distortion = np.asarray(calibration.get('distortion', [0] * 5), dtype=float)
+        if (k.shape != (3, 3) or not np.isfinite(k).all() or k[0, 0] <= 0 or k[1, 1] <= 0
+                or not np.allclose(k[2], [0, 0, 1]) or abs(k[0, 1]) > 1e-12 or abs(k[1, 0]) > 1e-12):
+            raise ValueError('Calibration K must be a finite zero-skew pinhole matrix with positive focal lengths')
+        if distortion.ndim != 1 or len(distortion) not in (4, 5, 8, 12, 14) or not np.isfinite(distortion).all():
+            raise ValueError('Invalid pinhole distortion coefficients')
+    processed_width = min(width, max_width)
+    processed_height = max(1, int(height * processed_width / width))
+    # Scale the entire intrinsics row, including principal point, after resizing.
+    k = np.diag([processed_width / width, processed_height / height, 1.0]) @ k
+    return processed_width, processed_height, k, distortion
 
-    for i, idx in enumerate(idx2):
-        if frame2.pts[idx] is not None:
-            frame2.pts[idx].add_observation(frame1, idx1[i])
 
-    # pose optimization
-    pose_optimizer = map3d.optimize(local_window=1, fix_points=True)
-    # print("Pose: %f" % pose_optimizer)
+@dataclass
+class FrameResult:
+    frame_id: int
+    timestamp: float
+    status: str
+    reason: str = ''
+    features: int = 0
+    matches: int = 0
+    inliers: int = 0
+    added_points: int = 0
+    landmarks: int = 0
+    processing_seconds: float = 0.0
+    ba: dict | None = None
 
-    # projection search
-    projection_pts_count = 0
-    if len(map3d.points) > 0:
-        map_points = np.array([p.homogenous() for p in map3d.points])
-        projs = np.dot(np.dot(K, frame1.pose[:3]), map_points.T).T
-        projs = projs[:, 0:2]/projs[:, 2:]
 
-        good_pts = (projs[:, 0] > 0) & (projs[:,0] < W) & (projs[:, 1] > 0) & (projs[:, 1] < H)
+class SLAM:
+    def __init__(self, k, features=2000, mask_bottom=0.0):
+        self.map = Map()
+        self.k = k
+        self.detector = cv2.ORB_create(nfeatures=features)
+        self.reference = None
+        self.mask_bottom = mask_bottom
 
-        for i, p in enumerate(map3d.points):
-            if not good_pts[i]:
-                continue;
+    def projection_matches(self, frame, pose, points, indices):
+        """Extend proposals using positive-depth map projections, one match per point."""
+        used_points, used_indices = set(points), set(indices)
+        candidates = [p for p in self.map.points if p not in used_points and p.frames
+                      and frame.id - p.frames[-1].id <= 30]
+        if not candidates or not len(frame.des):
+            return points, indices
+        pixels, _, visible = project(frame.k, pose, [p.point for p in candidates])
+        visible &= (pixels[:, 0] >= 0) & (pixels[:, 0] < frame.w) & (pixels[:, 1] >= 0) & (pixels[:, 1] < frame.h)
+        for point, pixel, valid in zip(candidates, pixels, visible):
+            if not valid:
+                continue
+            nearby = frame.kd.query_ball_point(pixel, 5.0)
+            reference = point.frames[-1].des[point.idx[-1]]
+            ranked = sorted((cv2.norm(reference, frame.des[i], cv2.NORM_HAMMING), i)
+                            for i in nearby if i not in used_indices)
+            if ranked and ranked[0][0] < 32 and (len(ranked) == 1 or ranked[0][0] < 0.8 * ranked[1][0]):
+                _, index = ranked[0]
+                points.append(point)
+                indices.append(index)
+                used_indices.add(index)
+        return points, indices
 
-            queue = frame1.kd.query_ball_point(projs[i], 5)
-            for q in queue:
-                if frame1.pts[q] is None:
-                    for o in p.orb():
-                        o_dist = hamming_distance(o, frame1.des[q])
-                        if o_dist < 32.0:
-                            p.add_observation(frame1, q)
-                            projection_pts_count += 1
-                            break
+    def add_points(self, current, previous, i, j, image):
+        free = np.array([current.pts[a] is None and previous.pts[b] is None for a, b in zip(i, j)], dtype=bool)
+        i, j = i[free], j[free]
+        xyz, good = triangulate_valid(previous.pose, current.pose, previous.kps[j], current.kps[i], self.k)
+        count = 0
+        for location, valid, a, b in zip(xyz, good, i, j):
+            if valid:
+                u, v = np.rint(current._kps[a]).astype(int)
+                if not (0 <= u < current.w and 0 <= v < current.h):
+                    continue
+                point = Point(self.map, location, image[v, u, ::-1])
+                point.add_observation(previous, b)
+                point.add_observation(current, a)
+                count += 1
+        return count
 
-    good_pts3d = np.array([frame1.pts[i] is None for i in idx1])
-    pts3d = triangulate(frame1.pose, frame2.pose, frame1.kps[idx1], frame2.kps[idx2])
-    good_pts3d &= np.abs(pts3d[:, 3]) > 0.005
-
-    # homogeneous 3-D coordinates
-    pts3d /= pts3d[:, 3:]
-
-    # should reject points hehind the camera
-    pts_tri_local = np.dot(frame1.pose, pts3d.T).T
-    good_pts3d &= pts_tri_local[:, 2] > 0
-
-    print("Adding: %d points" % np.sum(good_pts3d))
-
-    # loop to create 3D points using points obtained from the image frames
-    for i, p in enumerate(pts3d):
-        if not good_pts3d[i]:
-            continue
-
-        u, v = int(round(frame1._kps[idx1[i], 0])), int(round(frame1._kps[idx1[i], 1]))
-        pt = Point(map3d, p[0:3], img[v, u])
-        pt.add_observation(frame1, idx1[i])
-        pt.add_observation(frame2, idx2[i])
-
-    # for pt1, pt2 in ret_val:
-    for i1, i2 in zip(idx1, idx2):
-        pt1 = frame1.kps[i1]
-        pt2 = frame2.kps[i2]
-        u1, u2 = denormalize(K, pt1)
-        v1, v2 = denormalize(K, pt2)
-
-        # create circles, improve coloring
-        if frame1.pts[i1] is not None:
-            if len(frame1.pts[i1].frames) >= 5:
-                cv2.circle(img, (u1, u2), color = (0, 255, 0), radius = 3)
+    def process(self, image, frame_id, timestamp):
+        """Produce a frame result; failed visual estimates never mutate the map."""
+        start = time.perf_counter()
+        mask = None
+        if self.mask_bottom:
+            mask = np.full(image.shape[:2], 255, dtype=np.uint8)
+            mask[int(image.shape[0] * (1 - self.mask_bottom)):] = 0
+        frame = Frame(self.map, image, self.k, frame_id, timestamp, self.detector, mask)
+        result = FrameResult(frame_id, timestamp, 'initializing', features=len(frame.des))
+        try:
+            if self.reference is None:
+                if len(frame.des) < 30:
+                    raise TrackingError('insufficient features for a reference frame')
+                self.reference = frame
+                result.reason = 'waiting for a second view with adequate parallax'
             else:
-                cv2.circle(img, (u1, u2), color = (0, 128, 0), radius = 3)
-        else:
-            cv2.circle(img, (u1, u2), color = (0, 0, 0), radius = 3)
-        cv2.line(img, (u1, u2), (v1, v2), color = (255, 0, 255))
+                previous = self.reference
+                i, j = match_features(frame, previous)
+                result.matches = len(i)
+                if not self.map.frames:
+                    pose, inliers = recover_relative(previous.kps[j], frame.kps[i], min(self.k[0, 0], self.k[1, 1]))
+                    i, j = i[inliers], j[inliers]
+                    frame.pose = pose @ previous.pose
+                    xyz, valid = triangulate_valid(previous.pose, frame.pose, previous.kps[j], frame.kps[i], self.k)
+                    # A two-view map needs redundancy for descriptor dropout in
+                    # the next frame, not just the solver's minimum sample count.
+                    if np.count_nonzero(valid) < 60:
+                        raise TrackingError('insufficient triangulation/parallax for an initial map')
+                    spans = np.ptp(frame._kps[i[valid]], axis=0)
+                    if spans[0] < 0.1 * frame.w or spans[1] < 0.1 * frame.h:
+                        raise TrackingError('initial landmarks have insufficient image coverage')
+                    # Initialize one consistent arbitrary baseline, then use PnP
+                    # against this map rather than accumulating unit translations.
+                    self.map.add_frame(previous)
+                    self.map.add_frame(frame)
+                    result.added_points = self.add_points(frame, previous, i[valid], j[valid], image)
+                    result.inliers = int(np.count_nonzero(valid))
+                    result.status = 'initialized'
+                    self.reference = frame
+                else:
+                    points, indices = [], []
+                    for a, b in zip(i, j):
+                        if previous.pts[b] is not None:
+                            points.append(previous.pts[b])
+                            indices.append(int(a))
+                    # A provisional pose may guide map search; it is never
+                    # committed until the expanded matches pass full coverage.
+                    pose, selected = estimate_pose(frame, points, indices, require_coverage=False)
+                    points = [points[n] for n in selected]
+                    indices = [indices[n] for n in selected]
+                    points, indices = self.projection_matches(frame, pose, points, indices)
+                    frame.pose, selected = estimate_pose(frame, points, indices)
+                    # Commit only after the final map-based pose passes validation;
+                    # newly associated points already contributed to this estimate.
+                    self.map.add_frame(frame)
+                    for n in selected:
+                        points[n].add_observation(frame, indices[n])
+                    result.inliers = len(selected)
+                    # Adjacent dashcam frames often have too little parallax to
+                    # replenish landmarks. Reuse an older accepted view with a
+                    # larger time baseline, then apply the same geometric gates.
+                    older = [f for f in self.map.frames[:-1] if timestamp - f.timestamp >= 0.15]
+                    triangulation_frame = older[-1] if older else self.map.frames[0]
+                    ti, tj = match_features(frame, triangulation_frame)
+                    result.added_points = self.add_points(frame, triangulation_frame, ti, tj, image)
+                    self.reference = frame
+                    result.status = 'tracking'
+                if self.map.frames and len(self.map.frames) % 5 == 0:
+                    result.ba = self.map.optimize().to_dict()
+                    self.map.cull(frame.id)
+        except TrackingError as exc:
+            result.status = 'lost' if self.map.frames else 'initializing'
+            result.reason = str(exc)
+            # Refresh an unusable initializer, but never reset an established map's
+            # scale/origin after loss. Subsequent frames retry the last valid view.
+            if not self.map.frames and self.reference is not None and frame.id - self.reference.id > 60:
+                self.reference = frame if len(frame.des) >= 30 else None
+        result.landmarks = len(self.map.points)
+        result.processing_seconds = time.perf_counter() - start
+        return frame, result
 
-    if disp is not None:
-        disp.paint(img) # 2D display
 
-    # 3D map optimization
-    if frame.id >= 4 and frame.id % 5 == 0:
-        error = map3d.optimize()
-        print("Optimize: %f units of error" % error)
+def parser():
+    cli = argparse.ArgumentParser(description=__doc__)
+    cli.add_argument('video', type=Path)
+    cli.add_argument('--headless', action='store_true', help='Run without importing a GUI backend')
+    cli.add_argument('--hold', action='store_true', help='Keep the final desktop map open')
+    cli.add_argument('--max-frames', type=int, help='Maximum decoded frames to process')
+    cli.add_argument('--start-frame', type=int, default=os.getenv('SEEK', '0'))
+    cli.add_argument('--width', type=int, default=1024, help='Maximum processed image width')
+    cli.add_argument('--focal', type=float, default=os.getenv('F', '525'), help='Approximate focal length in source pixels')
+    cli.add_argument('--calibration', type=Path, help='Pinhole JSON calibration at source resolution')
+    cli.add_argument('--features', type=int, default=2000)
+    cli.add_argument('--mask-bottom', type=float, default=0.0, help='Exclude this image-height fraction (0 <= fraction < 1)')
+    cli.add_argument('--seed', type=int, default=0)
+    cli.add_argument('--threads', type=int, default=1, help='OpenCV worker threads')
+    cli.add_argument('--report', type=Path, help='Save JSON counts, outcomes and accepted world-to-camera poses')
+    return cli
 
-    map3d.display() # 3D display
-    end_time = time.time()
-    print("Time: %.2f ms" % ((end_time - start_time) * 1000.0))
-    print("Map: %d points, %d frames" % (len(map3d.points), len(map3d.frames)))
 
-if __name__ == "__main__":
-    debug_parameter = False # check if there was a debug system parameter
+def run(args):
+    """Run sequential decoding and always release the capture and desktop viewer."""
+    if not args.video.is_file():
+        raise ValueError(f'Video does not exist: {args.video}')
+    if args.start_frame < 0 or args.width <= 0 or args.features < 30 or args.threads < 1:
+        raise ValueError('Invalid start frame, width, feature count, or thread count')
+    if args.max_frames is not None and args.max_frames <= 0:
+        raise ValueError('--max-frames must be positive')
+    if not np.isfinite(args.mask_bottom) or not 0 <= args.mask_bottom < 1:
+        raise ValueError('--mask-bottom must be in [0, 1)')
+    if not -2147483648 <= args.seed <= 2147483647:
+        raise ValueError('--seed must fit a signed 32-bit integer')
+    if args.hold and args.headless:
+        raise ValueError('--hold requires the desktop viewer')
+    calibration = json.loads(args.calibration.read_text()) if args.calibration else None
+    if calibration is not None and not isinstance(calibration, dict):
+        raise ValueError('Calibration must be a JSON object')
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        if args.report.resolve() in {args.video.resolve(), args.calibration.resolve() if args.calibration else None}:
+            raise ValueError('Report must not overwrite video or calibration')
+    cv2.setRNGSeed(args.seed)
+    cv2.setNumThreads(args.threads)
+    if os.getenv('REVERSE') is not None:
+        print('Notice: REVERSE is ignored; translation sign is selected by cheirality.', file=sys.stderr)
+    capture = cv2.VideoCapture(str(args.video))
+    viewer = None
+    results = []
+    tracker = None
+    outcome, failure = 'completed', None
+    start = time.perf_counter()
+    metadata = {}
+    expected_frames = 0
+    try:
+        if not capture.isOpened():
+            raise ValueError(f'Cannot open video: {args.video}')
+        count = capture.get(cv2.CAP_PROP_FRAME_COUNT)
+        expected_frames = int(count) if np.isfinite(count) and count > 0 else 0
+        # Decode to the requested start rather than assuming compressed-video
+        # random seeking preserves an exact source-frame identity.
+        for _ in range(args.start_frame):
+            if not capture.grab():
+                raise ValueError('--start-frame is beyond the decodable video')
+        while args.max_frames is None or len(results) < args.max_frames:
+            ok, image = capture.read()
+            if not ok:
+                if expected_frames and args.start_frame + len(results) < expected_frames:
+                    raise ValueError('Decoding stopped before the reported end of the video')
+                break
+            frame_id = args.start_frame + len(results)
+            timestamp = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+            if not np.isfinite(timestamp) or (results and timestamp <= results[-1].timestamp):
+                raise ValueError('Decoder returned invalid/non-increasing timestamps')
+            if tracker is None:
+                source_h, source_w = image.shape[:2]
+                w, h, k, distortion = camera_parameters(source_w, source_h, args.focal, args.width, calibration)
+                metadata = {'source_size': [source_w, source_h], 'processed_size': [w, h],
+                            'K': k.tolist(), 'distortion': distortion.tolist(),
+                            'calibration_status': 'provided' if calibration else 'approximate',
+                            'timestamp_source': 'OpenCV CAP_PROP_POS_MSEC', 'scale': 'arbitrary'}
+                if calibration is None:
+                    print('Approximate intrinsics: supply --calibration for camera-specific geometry; scale is arbitrary.', file=sys.stderr)
+                tracker = SLAM(k, args.features, args.mask_bottom)
+                maps = cv2.initUndistortRectifyMap(k, distortion, None, k, (w, h), cv2.CV_32FC1) if np.any(distortion) else None
+                if not args.headless:
+                    from display import Viewer
+                    viewer = Viewer()
+            if image.shape[:2] != (source_h, source_w):
+                raise ValueError('Video dimensions changed during decoding')
+            image = cv2.resize(image, (w, h), interpolation=cv2.INTER_AREA)
+            if maps is not None:
+                image = cv2.remap(image, *maps, cv2.INTER_LINEAR)
+            frame, result = tracker.process(image, frame_id, timestamp)
+            results.append(result)
+            if len(results) == 1 or len(results) % 30 == 0:
+                print(f'frame={frame_id} state={result.status} inliers={result.inliers} points={result.landmarks}', flush=True)
+            if viewer and not viewer.update(image, frame, tracker.map, result.status):
+                outcome = 'closed'
+                break
+        if not results:
+            raise ValueError('No frames decoded in the requested range')
+        if viewer and viewer.open:
+            viewer.update(image, frame, tracker.map, result.status, force=True)
+            if args.hold:
+                viewer.hold()
+    except KeyboardInterrupt:
+        outcome, failure = 'interrupted', 'keyboard interrupt'
+    except Exception as exc:
+        outcome, failure = 'failed', f'{type(exc).__name__}: {exc}'
+    finally:
+        capture.release()
+        if viewer:
+            viewer.close()
+    elapsed = time.perf_counter() - start
+    poses = [] if tracker is None else [{'frame_id': f.id, 'timestamp': f.timestamp, 'T_cw': f.pose.tolist()} for f in tracker.map.frames]
+    summary = {'schema_version': 1, 'outcome': outcome, 'error': failure,
+               'video': str(args.video.resolve()), 'camera': metadata,
+               'environment': {'python': platform.python_version(), 'platform': platform.platform(),
+                               'numpy': np.__version__, 'opencv': cv2.__version__,
+                               'g2opy': importlib.metadata.version('g2opy')},
+               'configuration': {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
+               'decoded_frames': len(results), 'accepted_poses': len(poses),
+               'pose_coverage': len(poses) / len(results) if results else 0.0,
+               'states': dict(Counter(r.status for r in results)), 'elapsed_seconds': elapsed,
+               'frames': [asdict(r) for r in results], 'poses': poses,
+               'landmarks': len(tracker.map.points) if tracker else 0}
+    if args.report:
+        with args.video.open('rb') as handle:
+            summary['video_sha256'] = hashlib.file_digest(handle, 'sha256').hexdigest()
+        if args.calibration:
+            summary['calibration_sha256'] = hashlib.sha256(args.calibration.read_bytes()).hexdigest()
+        temporary = args.report.with_name(args.report.name + '.tmp')
+        temporary.write_text(json.dumps(summary, indent=2, allow_nan=False) + '\n')
+        temporary.replace(args.report)
+    print(f'Finished: {len(results)} frames, {len(poses)} accepted poses, {summary["landmarks"]} landmarks, {elapsed:.2f}s')
+    if failure:
+        print(failure, file=sys.stderr)
+    return 130 if outcome == 'interrupted' else (1 if outcome == 'failed' else (0 if len(poses) >= 2 else 2))
 
-    # check that user has provided video as program parameter
-    if len(sys.argv) < 2:
-        print("Error: Please provide a video file as a parameter\nexit(-1)")
-        exit(-1)
 
-    map3d.create_viewer()
-    video = cv2.VideoCapture(sys.argv[1]) # read in a mp4 file
-    if video.isOpened() == False:
-        print("Error, video file could not be loaded")
+def main(argv=None):
+    cli = parser()
+    args = cli.parse_args(argv)
+    try:
+        return run(args)
+    except (ValueError, OSError, cv2.error) as exc:
+        cli.error(str(exc))
 
-    # camera parameters
-    W = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
-    H = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    F = float(os.getenv("F", "525"))
-    CNT = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
-    K = np.array([[F, 0, W//2], [0, F, H//2], [0, 0, 1]])
-    Kinv = np.linalg.inv(K)
 
-    if os.getenv("SEEK") is not None:
-        video.set(cv2.CAP_PROP_POS_FRAMES, int(os.getenv("SEEK")))
-
-    if W > 1024:
-        downscale = 1024.0/W
-        F *= downscale
-        H = int(H * downscale)
-        W = 1024
-        print("using camera %dx%d with F %f" % (W, H, F))
-
-    disp = Display2D("Display Window", W, H) # 2d display window
-
-    i= 0
-    while (video.isOpened()):
-        ret, frame = video.read()
-        if ret == True:
-            process_frame(frame)
-        else:
-            break
-        i += 1
-
-    video.release()
-    cv2.destroyAllWindows()
+if __name__ == '__main__':
+    sys.exit(main())

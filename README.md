@@ -1,95 +1,115 @@
-## Python SLAM    
-This is a simple, evolving simultaneous localization and mapping program.
+# Python SLAM
 
-See [the detailed SLAM improvement TODO](TODO.md) for the current implementation review, prioritized changes, validation criteria, and dashcam benchmarking protocol.
+A small classical **sparse monocular SLAM prototype**: ORB image features, calibrated two-view initialization, map-based PnP tracking, triangulated 3D landmarks, and native g2opy bundle adjustment. It runs headlessly or with a main-thread Matplotlib image/3D viewer.
 
-This project is currently being developed using Python 3.x on Ubuntu 18.04 operating system. The program is now currently in the 3D map display
-and graph optimization stage with well coordinated and improved 3D map display as a future goal of the project.
+Camera poses are world-to-camera transforms. Translation and map coordinates have **arbitrary scale**. There is no loop closure, general relocalization, dense reconstruction, or persistent top-down map yet. The image panel is a tracking view, not a 2D map. Planned improvements and point-data interchange are in [TODO.md](TODO.md).
 
-## Program Usage  
-After cloning this repository, run the program using
+## Setup on macOS or Linux
+
+Use **CPython 3.11–3.14** and a fresh virtual environment. The initial binary-install target is Apple Silicon macOS and 64-bit glibc Linux (x86-64/ARM64, glibc 2.28 or newer). This is not a guarantee for every Linux distribution, architecture, or Python build. Alpine/musl, 32-bit systems, and older glibc need a separately validated native build or the container below.
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install '.[test,viewer]'
+.venv/bin/python -m pip check
+.venv/bin/python -m pytest -q
 ```
-./slam.py video_name.mp4
-python3 slam.py  video_name.mp4
+
+For a server without a desktop, install `'.[test]'` or just `.`. The core uses `opencv-python-headless`; **do not install another OpenCV wheel into the same environment**, because they share `cv2`. Matplotlib supplies the optional GUI. No SDL, Pangolin, PyOpenGL, CHOLMOD installation, or manual Python path changes are needed.
+
+On Debian/Ubuntu, install `python3-venv` if venv support is missing. A desktop viewer requires an interactive Matplotlib backend; `python3-tk` is an option for Tk on distribution Python. A headless Linux server requires no display server. See [platform and validation notes](docs/runtime.md) for tested versus unverified environments and native dependency references.
+
+## Reproducible synthetic smoke run
+
+```sh
+.venv/bin/python scripts/generate_demo.py output/demo.avi --frames 30
+.venv/bin/python slam.py output/demo.avi --focal 400 --headless \
+  --max-frames 30 --report output/demo-report.json
 ```
 
-## Required Libraries
-This program is being written in Python3 and uses multiple libraries that have to be installed by the user separately.  
-Here is a list of the current fundamental Python libraries necessary to the project:  
+This fixture verifies decoding, tracking, map insertion, and native optimization. It does not establish real-road accuracy. Its known focal length is **400 source-image pixels**; pass that value as shown.
 
-**OpenCV**  
-OpenCV is a library that contains numerous computer vision algorithms. Check them out at [OpenCV](https://docs.opencv.org/3.4/d1/dfb/intro.html).  
-To install, use the command `python3 -m pip install opencv-python`.
+## Run the dashcam clip
 
-**PySDL2**  
-PySDL2 is a Python wrapper for the SDL2 library. Check them out at [PySDL2](https://pysdl2.readthedocs.io/en/rel_0_9_6/index.html).  
-To install, use the command `python3 -m pip install pysdl2`.
+```sh
+.venv/bin/python slam.py sample_videos/GRMN2734.MP4 --headless \
+  --max-frames 1800 --report output/dashcam-report.json
+```
 
-**Scikit-image**
-Scikit-image (skimage) is a collection of image processing algorithms. Check them out at [Scikit-image](https://scikit-image.org/).  
-To install, use the command `python3 -m pip install scikit-image`.
+The clip is local and ignored by Git. Without `--calibration`, the source focal length defaults to **525 pixels** and the principal point to the image centre. These are approximate values, not a measured calibration for this dashcam. Intrinsics are scaled with the actual processed dimensions, capped at 1024 pixels wide by default.
 
-## Additional Requirements
-Here is a list of additional requirements that are used for this project:
+The initial repaired full-clip run decoded 1,800 frames and retained 932 accepted camera poses; tracking was lost in the latter part. It completed processing and reported the loss rather than inventing poses. See [measured results and remaining limits](docs/runtime.md#validation-results). Runtime success is not a claim of accurate or continuous localization.
 
-**g2opy**
-This is a python binding of graph optimization C++ g2o. Check them out at [g2opy](https://github.com/uoip/g2opy).
-You can follow the installation steps using the provided link. Note that there may be problems that occur when following the installation process
-provided. This can be fixed by import the system-specific parameters and functions library using *import sys* and appending the directory path of g2o to the program.
-Another potential fix to any build problems (especially if only private modules are found) is to specify the python version when building by using `cmake -DPYBIND11_PYTHON_VERSION=3.6 ..`
-and `make -j8` when building the dependency for this program.
+For the desktop image/3D view:
 
-**Pangolin**  
-Pangolin is a lightweight library for managing the OpenGL display/interaction and abstracting video input. The version being used for this project
-is the python binding for the Pangolin project. Check it out at [Pangolin](https://github.com/uoip/pangolin). Follow the installation instructions
-on the GitHub page. If there are any problems with building, please consult the build steps for g2o found above.
+```sh
+.venv/bin/python slam.py sample_videos/GRMN2734.MP4 \
+  --max-frames 120 --hold --report output/viewer-report.json
+```
 
-Note that these additional pybindings were built using Ubuntu 16.04 due to the fact that they build properly and reliably in that distribution version then in any other version.
-Build in another version at own user discretion. It is also recommended that you place all these additional repositories in a separate directory to keep you repository clean.
-Build all of the additional repositories in that separate directory.
+Press **Space** to pause/resume and **Q/Esc** to close. The Matplotlib toolbar supports view manipulation. `--hold` keeps the final map open; close it to finish writing the run report. Quit, EOF, and processing errors release the video and viewer resources.
 
-## Current Issues  
-There are currently some issues in regards to the performance of the optimizer. This may have be an issue that has blindsided the project and will be investigated.
+## Camera calibration
 
-## Current Updates
-2/19/20  
-Refactoring of code. Added culling to program and some cases to prevent runtime issues.
+Supply a JSON file describing the **decoded source image**, for example this schema illustration (values below are not a calibration for `GRMN2734.MP4`):
 
-2/4/20  
-Refactoring and adding new things to the code. New classes and functions. Added a basic optimizer for the 3D display.
-General code cleanup to come in the near future.
+```json
+{
+  "model": "pinhole",
+  "width": 640,
+  "height": 360,
+  "K": [[400, 0, 320], [0, 400, 180], [0, 0, 1]],
+  "distortion": [0, 0, 0, 0, 0]
+}
+```
 
-1/23/20
-Finally got a working version of the 3D map display to work. Still a bit funny acting but works properly and even works
-as a thread.
+```sh
+.venv/bin/python slam.py path/to/video.mp4 --calibration path/to/camera.json \
+  --headless --report output/calibrated-run.json
+```
 
-1/22/20  
-Successfully built both g2opy and pangolin python bindings. Program refactoring now stores point indices.
-Indices are not stored and program now makes use of points as objects. Initial version of the 3D map
-display for the program coming soon.
+The runner validates the source dimensions and pinhole matrix, rescales the intrinsics, and rectifies images with the supplied distortion coefficients. Estimation and BA then use rectified pixels. Calibration files describe the actual recording mode, including any crop or stabilization. Fisheye and time-varying camera models are not implemented; rectify those inputs externally with matching calibration. A supplied calibration is labelled `provided`, not automatically certified accurate.
 
-12/20/19
-General code cleanup especially in frame.py. Added major changes to extraction method: now based
-on image frames versus having an extractor object do all of the work.
+## Useful options and result semantics
 
-8/15/19  
-Inclusion of rotation and transformation matrix information to the program
+Run `.venv/bin/python slam.py --help` for the complete interface. The installed equivalent is `.venv/bin/python-slam`.
 
-8/7/2019  
-Program has improved coordinate usage using normalization and denormalization methods. Camera viewpoint is now
-calibrated, allowing for usage of essential matrix transformation over fundamental matrix transformation. Also
-fixed the bad interpreter issue. Users are now allowed to run the program using *./slam.py* in coexistence with
-the usual *python3 slam.py*.
+| Option | Meaning |
+| --- | --- |
+| `--headless` | No viewer module or GUI backend is imported |
+| `--start-frame N` | Skip exactly N decoded source frames; start a fresh map |
+| `--max-frames N` | Bound the number of frames processed |
+| `--width N` | Maximum processed width; preserve aspect ratio with rounded height |
+| `--focal F` | Approximate focal length in source pixels when calibration is absent |
+| `--calibration FILE` | Validated pinhole calibration input |
+| `--features N` | ORB feature cap (default 2000) |
+| `--mask-bottom FRACTION` | Optional fixed exclusion mask for hood/dashboard; default 0 |
+| `--seed N`, `--threads N` | OpenCV random seed and worker count; defaults 0 and 1 |
+| `--report FILE` | JSON environment/configuration, input hashes, frame outcomes, BA results and accepted `T_cw` poses |
+| `--hold` | Keep the desktop view open at the end |
 
-8/2/2019  
-Improved image feature extraction of the program using built in opencv methods, making for cleaner, better
-performing feature extracting. Also modified and did general code cleanup to improve overall readability
-with additional frame information printing.
+`F` and `SEEK` provide legacy defaults overridden by explicit CLI options. `REVERSE` is ignored with a notice: translation sign comes from two-view cheirality.
 
-7/31/2019  
-Added initial basic feature extracting features to the program. Image frame is used to slice image into
-separate grids and check for features to track.
+Frames are reported as `initializing`, `initialized`, `tracking`, or `lost`. Only accepted poses are inserted into the map; the initialization reference is also retained once the initial pair succeeds. After loss the tracker retries the last accepted view; there is no place-recognition recovery or silent restart into a different scale. Inspect `states` and `pose_coverage` in reports, not only exit status.
 
-7/31/2019  
-Making use of opencv and sdl2 python libraries. Display class houses the sdl2 frame display method.
-Note that the repository will not include a .mp4 video file to work with. Please provide your own video file.
+Exit codes: **0** means processing completed/was closed and a map was initialized (tracking gaps may exist); **1** means processing failed; **2** means invalid arguments or no map initialized; **130** means interrupted. GUI hold/pause time is included in total wall time; per-frame processing excludes decoding, resizing/rectification, and rendering. Do not label either number alone as real-time SLAM throughput.
+
+## Linux container and CI
+
+```sh
+docker build -t python-slam .
+docker run --rm \
+  -v "$PWD/sample_videos:/data:ro" -v "$PWD/output:/output" \
+  python-slam /data/GRMN2734.MP4 --max-frames 1800 --report /output/run.json
+```
+
+Create `output/` before mounting it. The Debian-based image runs headlessly. Docker and an actual Linux runtime were unavailable on the repair host, so this recipe is provided for validation on Linux, not represented as a locally tested image.
+
+The checked-in GitHub Actions workflow runs real native tests and a synthetic headless clip on Ubuntu and macOS, Python 3.11–3.14. It has not been run remotely as part of this local change. GUI tests require a desktop session separately.
+
+## Development
+
+Keep math-heavy code documented with shapes, units, coordinate direction, and the reason for numerical safeguards. Tests use independently generated camera observations and exercise actual native g2opy projection/convergence. Videos, benchmark reports, and virtual environments stay outside commits.
+
+The original project is MIT licensed; selected dependencies have their own licenses. See [LICENSE](LICENSE).

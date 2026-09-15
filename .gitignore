@@ -12,6 +12,7 @@ lib
 
 # Local Python environments and caches
 .venv/
+.venv-*/
 venv/
 env/
 .cache/

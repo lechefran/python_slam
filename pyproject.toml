@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "python-slam-prototype"
+version = "0.1.0"
+description = "Classical sparse monocular SLAM with headless evaluation"
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+license = {text = "MIT"}
+dependencies = [
+    "numpy>=2.0,<3",
+    "opencv-python-headless>=4.10,<6",
+    "scipy>=1.14,<2",
+    "g2opy==2.3.0",
+]
+
+[project.optional-dependencies]
+viewer = ["matplotlib>=3.9,<4"]
+test = ["pytest>=8,<10"]
+
+[project.scripts]
+python-slam = "slam:main"
+
+[tool.setuptools]
+py-modules = ["slam", "frame", "geometry", "point", "dmap", "display"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = ["error"]
