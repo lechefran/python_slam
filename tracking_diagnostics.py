@@ -10,6 +10,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from feature_mask import tint_exclusions
 
 
 def residual_summary(values):
@@ -37,12 +38,13 @@ def write_json(path, data):
     Path(path).write_text(json.dumps(json_safe(data), indent=2, allow_nan=False) + '\n')
 
 
-def overlay(image, result, trace):
+def overlay(image, result, trace, mask=None):
     """Show descriptor, seed-PnP, projection, and final-PnP filtering in BGR.
 
 Each panel uses the same processed image. Green means geometric inlier, not
 accepted camera: the final coverage gate may still reject that entire estimate.
 """
+    image = tint_exclusions(image, mask)
     height, width = image.shape[:2]
     panels = []
     stages = result.diagnostics['stages']
@@ -67,7 +69,8 @@ accepted camera: the final coverage gate may still reject that entire estimate.
     matching_title = 'descriptor filtering' if result.recovered_from is None else 'normal descriptor filtering'
     first = panel(f'Frame {result.frame_id}: {result.status} | {matching_title}')
     label(first, f'{result.features} features; {result.matches} unique matches to reference')
-    label(first, 'Gray: ORB features; yellow: surviving matches', 2)
+    label(first, 'Gray: ORB; yellow: matches; orange: excluded' if mask is not None
+          else 'Gray: ORB features; yellow: surviving matches', 2)
     label(first, f'Normal reference: {result.diagnostics["reference_frame_id"]}' if result.recovered_from is not None
           else f'Reference frame: {result.diagnostics["reference_frame_id"]}', 3)
     for pixel in trace.get('feature_pixels', []):
@@ -142,7 +145,7 @@ class DiagnosticWriter:
     def captures(self, frame_id):
         return self.start <= frame_id <= self.end
 
-    def write(self, image, result, trace):
+    def write(self, image, result, trace, mask=None):
         transition = self.previous_status != result.status
         self.previous_status = result.status
         if not self.captures(result.frame_id):
@@ -152,7 +155,7 @@ class DiagnosticWriter:
             return
         stem = f'frame-{result.frame_id:06d}'
         png = self.directory / f'{stem}.png'
-        if not cv2.imwrite(str(png), overlay(image, result, trace)):
+        if not cv2.imwrite(str(png), overlay(image, result, trace, mask)):
             raise OSError(f'Cannot write diagnostic image: {png}')
         write_json(self.directory / f'{stem}.json', {'schema_version': 1,
             'coordinate_contract': {'pixels': 'processed rectified image (u,v)',

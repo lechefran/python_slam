@@ -122,6 +122,9 @@ def compare_baseline(report, baseline):
                      == baseline['configuration'].get('recovery', False))
     same_mapping = (report['configuration'].get('spatial_mapping', False)
                     == baseline['configuration'].get('spatial_mapping', False))
+    same_mask = ((report.get('feature_mask') or {}).get('effective_sha256')
+                 == (baseline.get('feature_mask') or {}).get('effective_sha256')
+                 and report['configuration'].get('mask_bottom', 0) == baseline['configuration'].get('mask_bottom', 0))
     fields = ('timestamp', 'status', 'reason', 'features', 'matches', 'inliers', 'added_points', 'landmarks')
     previous = {row['frame_id']: row for row in baseline['frames']}
     differences = [{'frame_id': row['frame_id'],
@@ -150,6 +153,7 @@ def compare_baseline(report, baseline):
             spatial_after.append(current_support)
     return {'compatible_inputs': compatible, 'same_solver_configuration': same_solver,
             'same_mapping_configuration': same_mapping, 'same_recovery_configuration': same_recovery,
+            'same_feature_mask': same_mask,
             'coverage_comparison': coverage, 'compared_frames': len(report['frames']),
             'spatial_support_common_accepted_frames': {'baseline': summarize_support(spatial_before),
                                                        'current': summarize_support(spatial_after)},
@@ -195,6 +199,7 @@ def main(argv=None):
     cli.add_argument('--focus-end', type=int, default=1000)
     cli.add_argument('--every', type=int, default=10)
     cli.add_argument('--calibration', type=Path)
+    cli.add_argument('--feature-mask', type=Path)
     cli.add_argument('--focal', type=float, default=525)
     cli.add_argument('--spatial-mapping', action=argparse.BooleanOptionalAction, default=True,
                      help='Replenish sparse image cells from a longer triangulation baseline')
@@ -222,6 +227,8 @@ def main(argv=None):
                '--diagnostics-end', str(args.focus_end), '--diagnostics-every', str(args.every)]
     if args.calibration:
         command.extend(['--calibration', str(args.calibration)])
+    if args.feature_mask:
+        command.extend(['--feature-mask', str(args.feature_mask)])
     command.append('--condition-pnp' if args.condition_pnp else '--no-condition-pnp')
     command.append('--spatial-mapping' if args.spatial_mapping else '--no-spatial-mapping')
     command.append('--robust-pnp' if args.robust_pnp else '--no-robust-pnp')

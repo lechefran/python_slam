@@ -18,6 +18,8 @@ class Viewer:
         self.feature_artists = []
         self.feature_legend = None
         self.show_features = True
+        self.mask_artist = None
+        self.show_mask = True
         self.last_draw = 0.0
         self.paused = False
         self.figure.canvas.mpl_connect('key_press_event', self.on_key)
@@ -28,6 +30,11 @@ class Viewer:
             self.close()
         elif event.key == ' ':
             self.paused = not self.paused
+        elif event.key in ('m', 'M'):
+            self.show_mask = not self.show_mask
+            if self.mask_artist is not None:
+                self.mask_artist.set_visible(self.show_mask)
+            self.figure.canvas.draw_idle()
         elif event.key in ('o', 'O'):
             self.show_features = not self.show_features
             for artist in self.feature_artists:
@@ -41,7 +48,7 @@ class Viewer:
     def open(self):
         return self.plt.fignum_exists(self.figure.number)
 
-    def update(self, image, frame, map3d, status, force=False):
+    def update(self, image, frame, map3d, status, force=False, mask=None):
         """Draw matching image/map snapshots; viewer coordinates never change poses."""
         if not self.open:
             return False
@@ -62,13 +69,26 @@ class Viewer:
                 self.feature_legend.set_visible(self.show_features)
             else:
                 self.image_artist.set_data(rgb)
+            if mask is not None:
+                # A separate RGBA layer leaves both video pixels and ORB input
+                # untouched. Its shape/extent is identical to the processed image.
+                tint = np.zeros((*mask.shape, 4), dtype=np.uint8)
+                tint[:, :, :3] = [255, 140, 0]
+                tint[:, :, 3] = np.where(mask == 0, 100, 0)
+                if self.mask_artist is None:
+                    self.mask_artist = self.image_axes.imshow(tint, zorder=1)
+                else:
+                    self.mask_artist.set_data(tint)
+                self.mask_artist.set_visible(self.show_mask)
+            elif self.mask_artist is not None:
+                self.mask_artist.set_data(np.zeros((*image.shape[:2], 4), np.uint8))
             # Use the detector's processed-image (u,v) pixels, never normalized
             # camera rays. Read live associations after culling; rings are a
             # display layer and do not alter the image or tracking inputs.
             mapped = np.array([point is not None and not point.deleted for point in frame.pts], dtype=bool)
             for artist, selected in zip(self.feature_artists, (~mapped, mapped)):
                 artist.set_offsets(frame._kps[selected])
-            self.image_axes.set_title(f'Frame {frame.id}: {status}\nSpace: pause | O: ORB overlay | Q/Esc: close')
+            self.image_axes.set_title(f'Frame {frame.id}: {status}\nSpace: pause | O: ORB | M: exclusions (orange) | Q: close', fontsize=10)
             axes = self.map_axes
             axes.clear()
             if map3d.frames:

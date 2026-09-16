@@ -84,6 +84,18 @@ pose refinement and checks on the weighted and unweighted pixel Jacobian.
 - [ ] Evaluate held-out natural revisits, repeated-place negatives and dynamic-object contamination; this bounded archive is not loop closure or a global place-recognition system.
 - [ ] Profile prolonged textured loss and larger histories before replacing the bounded linear descriptor scan with indexed retrieval.
 
+## Configurable exclusion mask update
+
+- [x] Accept source-resolution binary PNG masks; transform them with image resize/rectification and combine exclusions with the processed bottom strip.
+- [x] Exclude invalid rectification borders and recheck ORB feature centres after pyramid extraction while preserving descriptor-row alignment.
+- [x] Show excluded regions in the viewer and diagnostic images; toggle the viewer layer with M without changing tracking.
+- [x] Record mask provenance, effective mask hash and excluded fraction; keep custom masks opt-in.
+- [x] Pass 108 tests and native viewer/installed CLI checks. Benchmark the broad lower-image example and document its severe tracking regression; it is not a default preset.
+- [x] Preserve all 1,796 baseline poses, final optimized poses and per-frame outcomes exactly on the full unmasked dashcam replay; independently verify saved masked features avoid excluded pixels.
+- [ ] Qualify stationary-scene support and held-out trajectory accuracy; masks do not classify moving objects or replace landmark maturity (MAP-04).
+
+Implementation and qualification: [exclusion masks](docs/exclusion-masks.md).
+
 ## Purpose and scope
 
 Improve this small Python monocular SLAM application in four connected areas: camera positioning, feature/landmark and graph-edge calculations, 2D mapping, and 3D mapping. Correctness, measured accuracy, usable operation, and sustained performance take precedence over adding algorithms.
@@ -384,7 +396,7 @@ MAGSAC does not eliminate the need for a useful noise/termination threshold, and
 ### FEAT-07 — Reject dashboard features and reduce dynamic-object contamination [P1/P2]
 
 - **Finding:** no mask or dynamic-consistency logic exists. The inspected dashcam frames include a stationary-in-image dashboard and independently moving traffic.
-- [ ] Support a calibration/preprocessing-aware static exclusion mask for the hood/dashboard, overlays, and invalid rectification borders. Avoid a hardcoded crop that invalidates intrinsics.
+- [x] Support a calibration/preprocessing-aware static exclusion mask for the hood/dashboard, overlays, and invalid rectification borders. Avoid a hardcoded crop that invalidates intrinsics. See the [implementation and qualification](docs/exclusion-masks.md).
 - [ ] Monitor feature distribution and spatial motion consistency; use robust geometry plus persistent track history to reject moving-object observations and delay their landmark promotion.
 - [ ] Evaluate optional semantic masks only after the classical baseline is measured. A detected vehicle is not always moving; a visually static track is not necessarily part of the world map.
 - [ ] Test ablations with/without masks on identical frames and parameter settings. Quantify retained static scene support as well as rejected tracks.

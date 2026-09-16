@@ -89,6 +89,7 @@ Run `.venv/bin/python slam.py --help` for the complete interface. The installed 
 | `--robust-pnp` / `--no-robust-pnp` | Opt-in block-Huber pose refinement; conditioning checks are always active. Default off pending dashcam coverage qualification |
 | `--recovery` / `--no-recovery` | Recover failed tracking against a bounded archive of older accepted views; enabled by default |
 | `--mask-bottom FRACTION` | Optional fixed exclusion mask for hood/dashboard; default 0 |
+| `--feature-mask FILE.png` | Source-resolution binary grayscale mask: black excludes feature centres, white allows them; combined with the bottom strip |
 | `--seed N`, `--threads N` | OpenCV random seed and worker count; defaults 0 and 1 |
 | `--report FILE` | JSON environment/configuration, input hashes, frame outcomes, BA results and accepted `T_cw` poses |
 | `--diagnostics-dir DIR` | New directory for sampled tracking overlays and numeric evidence; use with `--report` |
@@ -106,6 +107,21 @@ the tracker's actual pixel locations on corners and textured edges; they are
 not a separate edge detector. Press **O** to hide/show the markers, including
 while paused; **Space** pauses and **Q/Esc** closes the viewer. The overlay is
 display-only and does not change tracking or the source video.
+
+### Configurable exclusion masks
+
+Use `--feature-mask mask.png` to exclude the dashboard, timestamps, or other
+fixed image regions from feature extraction. The file must be a single-channel
+8-bit PNG containing only 0 (black, exclude) and 255 (white, allow), with the
+same dimensions as the decoded source video. Images are not cropped and
+intrinsics are unchanged. The mask follows image resizing and rectification;
+pixels containing excluded or invalid border contributions are also excluded.
+`--mask-bottom` applies an additional strip in the final processed image.
+
+The viewer and diagnostic images tint exclusions orange. **M** toggles that
+display layer, including while paused; it does not enable or disable masking.
+Reports include the mask hash, coordinate convention and excluded fraction.
+See [mask creation, behavior and measured results](docs/exclusion-masks.md).
 
 Exit codes: **0** means processing completed/was closed and a map was initialized (tracking gaps may exist); **1** means processing failed; **2** means invalid arguments or no map initialized; **130** means interrupted. GUI hold/pause time is included in total wall time; per-frame processing excludes decoding, resizing/rectification, and rendering. Do not label either number alone as real-time SLAM throughput.
 

@@ -22,6 +22,7 @@ from frame import Frame, TrackingError, estimate_pose, match_features, recover_r
 from geometry import project, spatial_support, triangulate, triangulate_valid
 from point import Point
 from recovery import RecoveryKeyframes
+from feature_mask import prepare_feature_mask
 
 
 def camera_parameters(width, height, focal=525.0, max_width=1024, calibration=None):
@@ -73,17 +74,45 @@ class FrameResult:
 
 class SLAM:
     def __init__(self, k, features=2000, mask_bottom=0.0, condition_pnp=True, spatial_mapping=True, robust_pnp=False,
-                 recovery=True):
+                 recovery=True, feature_mask=None):
         self.map = Map()
         self.k = k
         self.detector = cv2.ORB_create(nfeatures=features)
         self.reference = None
         self.mask_bottom = mask_bottom
+        if not np.isfinite(mask_bottom) or not 0 <= mask_bottom < 1:
+            raise ValueError('mask_bottom must be in [0, 1)')
+        if feature_mask is not None:
+            if (feature_mask.dtype != np.uint8 or feature_mask.ndim != 2
+                    or not np.isin(feature_mask, [0, 255]).all()):
+                raise ValueError('feature_mask must be a binary uint8 processed-image mask')
+            feature_mask = feature_mask.copy()
+            feature_mask.setflags(write=False)
+        self.feature_mask = feature_mask
+        self._mask_shape = None
+        self._extraction_mask = None
         self.condition_pnp = condition_pnp
         self.robust_pnp = robust_pnp
         self.spatial_mapping = spatial_mapping
         self.recovery = recovery
         self.keyframes = RecoveryKeyframes()
+
+    def extraction_mask(self, shape):
+        """Combine immutable processed exclusions with the legacy bottom strip once."""
+        if self._mask_shape is not None:
+            if tuple(shape) != self._mask_shape:
+                raise ValueError('Image dimensions changed after preparing the feature mask')
+            return self._extraction_mask
+        mask = self.feature_mask
+        if mask is not None and mask.shape != tuple(shape):
+            raise ValueError('Processed feature mask dimensions do not match the image')
+        if self.mask_bottom:
+            mask = np.full(shape, 255, np.uint8) if mask is None else mask.copy()
+            mask[int(shape[0] * (1 - self.mask_bottom)):] = 0
+        if mask is not None:
+            mask.setflags(write=False)
+        self._mask_shape, self._extraction_mask = tuple(shape), mask
+        return mask
 
     def projection_matches(self, frame, pose, points, indices, diagnostics=None, trace=None, recovery_reference=None):
         """Extend proposals using positive-depth map projections, one match per point."""
@@ -278,15 +307,13 @@ class SLAM:
                     'reference_age_frames': frame_id - self.reference.id if self.reference else None,
                     'reference_age_seconds': timestamp - self.reference.timestamp if self.reference else None,
                     'stages': {}, 'timing_seconds': {}} if diagnostics else None
-        mask = None
-        if self.mask_bottom:
-            mask = np.full(image.shape[:2], 255, dtype=np.uint8)
-            mask[int(image.shape[0] * (1 - self.mask_bottom)):] = 0
+        mask = self.extraction_mask(image.shape[:2])
         frame = Frame(self.map, image, self.k, frame_id, timestamp, self.detector, mask)
         result = FrameResult(frame_id, timestamp, 'initializing', features=len(frame.des), diagnostics=evidence)
         if evidence is not None:
             evidence['timing_seconds']['extraction'] = time.perf_counter() - start
             evidence['stages']['extraction'] = {'spatial_support': spatial_support(frame._kps, frame.w, frame.h)}
+            evidence['stages']['extraction']['excluded_fraction'] = float(np.mean(mask == 0)) if mask is not None else 0.0
         if self.last_trace is not None:
             self.last_trace['feature_pixels'] = frame._kps.tolist()
         stage = 'reference'
@@ -463,6 +490,7 @@ def parser():
     cli.add_argument('--recovery', action=argparse.BooleanOptionalAction, default=True,
                      help='Recover failed tracking against a bounded archive of older views')
     cli.add_argument('--mask-bottom', type=float, default=0.0, help='Exclude this image-height fraction (0 <= fraction < 1)')
+    cli.add_argument('--feature-mask', type=Path, help='Source-size grayscale PNG: 0 excludes, 255 allows features')
     cli.add_argument('--seed', type=int, default=0)
     cli.add_argument('--threads', type=int, default=1, help='OpenCV worker threads')
     cli.add_argument('--report', type=Path, help='Save JSON counts, outcomes and accepted world-to-camera poses')
@@ -494,8 +522,9 @@ def run(args):
         raise ValueError('Calibration must be a JSON object')
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
-        if args.report.resolve() in {args.video.resolve(), args.calibration.resolve() if args.calibration else None}:
-            raise ValueError('Report must not overwrite video or calibration')
+        inputs = {p.resolve() for p in (args.video, args.calibration, args.feature_mask) if p is not None}
+        if {args.report.resolve(), args.report.with_name(args.report.name + '.tmp').resolve()} & inputs:
+            raise ValueError('Report must not overwrite video, calibration or feature mask')
     cv2.setRNGSeed(args.seed)
     cv2.setNumThreads(args.threads)
     diagnostic_writer = None
@@ -512,6 +541,7 @@ def run(args):
     outcome, failure = 'completed', None
     start = time.perf_counter()
     metadata = {}
+    mask_metadata = None
     expected_frames = 0
     try:
         if not capture.isOpened():
@@ -542,8 +572,14 @@ def run(args):
                             'timestamp_source': 'OpenCV CAP_PROP_POS_MSEC', 'scale': 'arbitrary'}
                 if calibration is None:
                     print('Approximate intrinsics: supply --calibration for camera-specific geometry; scale is arbitrary.', file=sys.stderr)
-                tracker = SLAM(k, args.features, args.mask_bottom, args.condition_pnp, args.spatial_mapping, args.robust_pnp, args.recovery)
                 maps = cv2.initUndistortRectifyMap(k, distortion, None, k, (w, h), cv2.CV_32FC1) if np.any(distortion) else None
+                feature_mask, mask_metadata = prepare_feature_mask(args.feature_mask, (source_w, source_h), (w, h), maps)
+                tracker = SLAM(k, args.features, args.mask_bottom, args.condition_pnp, args.spatial_mapping,
+                               args.robust_pnp, args.recovery, feature_mask=feature_mask)
+                effective_mask = tracker.extraction_mask((h, w))
+                mask_metadata.update(bottom_fraction=args.mask_bottom,
+                    excluded_fraction=float(np.mean(effective_mask == 0)) if effective_mask is not None else 0.0,
+                    effective_sha256=hashlib.sha256(effective_mask.tobytes()).hexdigest() if effective_mask is not None else None)
                 if not args.headless:
                     from display import Viewer
                     viewer = Viewer()
@@ -558,18 +594,18 @@ def run(args):
             results.append(result)
             if diagnostic_writer:
                 diagnostic_start = time.perf_counter()
-                diagnostic_writer.write(image, result, tracker.last_trace)
+                diagnostic_writer.write(image, result, tracker.last_trace, mask=effective_mask)
                 result.diagnostics['timing_seconds']['artifact_write'] = time.perf_counter() - diagnostic_start
             if len(results) == 1 or len(results) % 30 == 0 or result.recovered_from is not None:
                 source = '' if result.recovered_from is None else f' recovered_from={result.recovered_from}'
                 print(f'frame={frame_id} state={result.status} inliers={result.inliers} points={result.landmarks}{source}', flush=True)
-            if viewer and not viewer.update(image, frame, tracker.map, result.status):
+            if viewer and not viewer.update(image, frame, tracker.map, result.status, mask=effective_mask):
                 outcome = 'closed'
                 break
         if not results:
             raise ValueError('No frames decoded in the requested range')
         if viewer and viewer.open:
-            viewer.update(image, frame, tracker.map, result.status, force=True)
+            viewer.update(image, frame, tracker.map, result.status, force=True, mask=effective_mask)
             if args.hold:
                 viewer.hold()
     except KeyboardInterrupt:
@@ -585,7 +621,7 @@ def run(args):
     elapsed = time.perf_counter() - start
     poses = [] if tracker is None else [{'frame_id': f.id, 'timestamp': f.timestamp, 'T_cw': f.pose.tolist()} for f in tracker.map.frames]
     summary = {'schema_version': 1, 'outcome': outcome, 'error': failure,
-               'video': str(args.video.resolve()), 'camera': metadata,
+               'video': str(args.video.resolve()), 'camera': metadata, 'feature_mask': mask_metadata,
                'environment': {'python': platform.python_version(), 'platform': platform.platform(),
                                'numpy': np.__version__, 'opencv': cv2.__version__,
                                'g2opy': importlib.metadata.version('g2opy')},

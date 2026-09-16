@@ -39,6 +39,14 @@ def extract(img, detector=None, mask=None):
     if descriptors is None or not keypoints:
         return np.empty((0, 2)), np.empty((0, 32), dtype=np.uint8)
     pixels = np.array([keypoint.pt for keypoint in keypoints], dtype=np.float64)
+    if mask is not None:
+        # Pyramid mask resampling can admit boundary centres. Apply one final
+        # processed-pixel check to both arrays, keeping descriptor rows aligned.
+        uv = np.floor(pixels + .5).astype(int)
+        inside = (uv[:, 0] >= 0) & (uv[:, 0] < mask.shape[1]) & (uv[:, 1] >= 0) & (uv[:, 1] < mask.shape[0])
+        allowed = np.zeros(len(pixels), dtype=bool)
+        allowed[inside] = mask[uv[inside, 1], uv[inside, 0]] != 0
+        pixels, descriptors = pixels[allowed], descriptors[allowed]
     return pixels, descriptors
 
 
