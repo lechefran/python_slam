@@ -100,6 +100,13 @@ Run `.venv/bin/python slam.py --help` for the complete interface. The installed 
 
 Frames are reported as `initializing`, `initialized`, `tracking`, or `lost`. Only accepted poses are inserted into the map; the initialization reference is also retained once the initial pair succeeds. Failed normal tracking can recover against a bounded archive of older views, with `recovered_from` identifying the selected keyframe. Failed recovery retains the last valid reference and map scale. Inspect `states`, `pose_coverage` and `recovered_frames` in reports, not only exit status.
 
+The desktop dashcam view shows ORB features as small rings: **cyan** for detected
+features and **green** for features associated with live 3D landmarks. These use
+the tracker's actual pixel locations on corners and textured edges; they are
+not a separate edge detector. Press **O** to hide/show the markers, including
+while paused; **Space** pauses and **Q/Esc** closes the viewer. The overlay is
+display-only and does not change tracking or the source video.
+
 Exit codes: **0** means processing completed/was closed and a map was initialized (tracking gaps may exist); **1** means processing failed; **2** means invalid arguments or no map initialized; **130** means interrupted. GUI hold/pause time is included in total wall time; per-frame processing excludes decoding, resizing/rectification, and rendering. Do not label either number alone as real-time SLAM throughput.
 
 ## Diagnose tracking loss

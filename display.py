@@ -15,6 +15,9 @@ class Viewer:
         self.image_axes = self.figure.add_subplot(121)
         self.map_axes = self.figure.add_subplot(122, projection='3d')
         self.image_artist = None
+        self.feature_artists = []
+        self.feature_legend = None
+        self.show_features = True
         self.last_draw = 0.0
         self.paused = False
         self.figure.canvas.mpl_connect('key_press_event', self.on_key)
@@ -25,6 +28,14 @@ class Viewer:
             self.close()
         elif event.key == ' ':
             self.paused = not self.paused
+        elif event.key in ('o', 'O'):
+            self.show_features = not self.show_features
+            for artist in self.feature_artists:
+                artist.set_visible(self.show_features)
+            if self.feature_legend is not None:
+                self.feature_legend.set_visible(self.show_features)
+            # Change visibility immediately, including while paused or at EOF.
+            self.figure.canvas.draw_idle()
 
     @property
     def open(self):
@@ -41,9 +52,23 @@ class Viewer:
             if self.image_artist is None:
                 self.image_artist = self.image_axes.imshow(rgb)
                 self.image_axes.axis('off')
+                self.feature_artists = [self.image_axes.scatter(
+                    [], [], s=18, facecolors='none', edgecolors=color, linewidths=.7,
+                    label=label, visible=self.show_features)
+                    for color, label in (('#00d5ff', 'ORB feature'), ('#55ff55', 'Mapped ORB'))]
+                self.feature_legend = self.image_axes.legend(
+                    loc='lower left', fontsize=8, facecolor='#111111',
+                    labelcolor='white', framealpha=.75)
+                self.feature_legend.set_visible(self.show_features)
             else:
                 self.image_artist.set_data(rgb)
-            self.image_axes.set_title(f'Frame {frame.id}: {status}\nSpace: pause | Q/Esc: close')
+            # Use the detector's processed-image (u,v) pixels, never normalized
+            # camera rays. Read live associations after culling; rings are a
+            # display layer and do not alter the image or tracking inputs.
+            mapped = np.array([point is not None and not point.deleted for point in frame.pts], dtype=bool)
+            for artist, selected in zip(self.feature_artists, (~mapped, mapped)):
+                artist.set_offsets(frame._kps[selected])
+            self.image_axes.set_title(f'Frame {frame.id}: {status}\nSpace: pause | O: ORB overlay | Q/Esc: close')
             axes = self.map_axes
             axes.clear()
             if map3d.frames:
