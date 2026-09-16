@@ -45,7 +45,7 @@ def test_invalid_frame_range_and_report_does_not_overwrite_input(tmp_path):
     assert result.returncode == 1 and 'beyond' in result.stderr
 
 
-@pytest.mark.parametrize('entrypoint', ['python-slam', 'python-slam-calibrate'])
+@pytest.mark.parametrize('entrypoint', ['python-slam', 'python-slam-calibrate', 'python-slam-calibration-report'])
 def test_installed_entrypoint_away_from_checkout(tmp_path, entrypoint):
     command = Path(sys.executable).with_name(entrypoint)
     if not command.exists():

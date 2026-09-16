@@ -123,7 +123,7 @@ models are outside this initial tool.
 
 ## Output and SLAM integration
 
-Both JSON files are version 1. The camera retains the existing runtime keys
+The camera JSON is version 1; the quality report is now version 2 (see below). The camera retains the existing runtime keys
 `model`, `width`, `height`, `K`, and `distortion`. Additional metadata records
 camera/recording mode, board geometry and units, UTC fitting time, quality status,
 and the report path/SHA-256. The report stores dependency versions, source-file
@@ -176,3 +176,127 @@ The installed command is available in this workspace at
 entry points. Both existing environments pass `pip check`; `.venv` retains its original desktop OpenCV installation. Native
 validation was performed on macOS with OpenCV 5.0.0. Linux execution and
 real-camera calibration quality have not been established by these tests.
+
+## Quality report review (schema 2)
+
+The calibration JSON remains schema 1 and uses the same camera-model fields.
+The **quality report is now schema 2**; it retains the version 1 fields and adds
+structured review checks, per-corner signed residuals, distinct-view spatial
+support, edge-band coverage, capture summaries, and a fitting/validation
+comparison. The report embeds the fitted camera parameters and explicitly states
+that detection/fitting used raw source pixels without resize, crop or rectification.
+The camera file's report SHA-256 covers the final report, including these checks.
+
+### Open an offline HTML review
+
+Add an optional HTML output to a normal fitting command:
+
+```sh
+.venv-portability/bin/python -m calibration \
+  --images output/calibration-captures/fit \
+  --validation-images output/calibration-captures/validation \
+  --board checkerboard --columns 9 --rows 6 --square-size 0.025 \
+  --camera 'camera-and-lens-identifier' \
+  --recording-mode '1920x1080 29.97fps; fixed focus; crop/zoom/stabilization settings' \
+  --output output/camera-v2.json --report output/camera-v2-report.json \
+  --report-html output/camera-v2-review.html
+```
+
+Or render a **saved version 1 or 2** report without reopening images or refitting:
+
+```sh
+.venv-portability/bin/python -m calibration_report \
+  output/camera-v2-report.json --output output/camera-v2-review.html
+```
+
+The installed equivalent is `python-slam-calibration-report`. All HTML paths must
+be new files; existing outputs are preserved. The HTML is self-contained, with
+no JavaScript, remote resources or source-image dependencies. Camera identifiers,
+paths and other supplied text are escaped. The JSON remains the complete numeric
+evidence, including file hashes and detected point coordinates.
+
+The HTML contains:
+
+- An overall status, actionable review findings and their observed values/thresholds.
+- Fitting versus held-out RMS, P95, maximum residual and board-normal span.
+- Separate spatial grids with residuals, corner counts and **distinct view counts**.
+- Edge-band support and images ranked by RMS, with individual review reasons.
+- A capture audit, including images where a board was not found.
+- The camera model, named OpenCV local standard deviations with units, policy,
+  board dimensions, preprocessing information and qualification limits.
+
+A failed fit can also write an HTML report explaining the failure and examined
+captures. Early failure may leave some images unexamined; the audit is explicitly
+partial. No-board failures do not acquire camera estimates. If optional HTML
+writing fails after the camera and JSON are saved, the command exits 2 and states
+that those two files remain available; render the saved JSON separately.
+
+### Review policy and interpretation
+
+All quality checks are **post-fit diagnostics**. They never remove observations,
+change optimization weights, refit intrinsics or select a model using held-out data.
+Any flagged check sets the report to `needs_review`. Successful camera files
+remain `measured_unverified`; `checks_passed` is not a certificate.
+
+| Check | Review condition | Meaning / next action |
+| --- | --- | --- |
+| Overall or individual-image RMS | >1 source pixel | Inspect board/corner quality, blur and lens-model suitability |
+| Individual-image residual tail | P95 >2 px or max >5 px | A few bad corners can be hidden by a small global average |
+| Image RMS relative to its split | >max(0.25 px, median + 3 × 1.4826 × MAD) | Inspect unusually poor views; not an automatic rejection |
+| Occupied spatial cells | <9 of 12 | Capture board corners across more of the image |
+| Repeated spatial support | <9 cells with at least 2 distinct views each | Many corners in one photograph do not provide multiple viewpoints |
+| Each outer edge band | <2 views containing corners in that band | Add captures near that edge; bands occupy the outer 10% of width/height |
+| Fitting board-normal span | <10 degrees | Capture stronger horizontal and vertical tilts |
+| Validation gap | Validation RMS >2× fitting RMS **and** gap >0.25 px | Investigate capture/mode mismatch or poor generalization; retain an independent validation set |
+
+MAD is the median absolute deviation of **per-image RMS**, calculated separately
+for fitting and validation. Its 1.4826 scale factor is a conventional robust scale
+estimate; these heuristic flags are not hypothesis tests or calibrated confidence.
+The 0.25 px floor avoids flagging meaningless roundoff differences. The validation
+RMS ratio is `null` if fitting RMS is at most 1e-9 px; its absolute gap remains
+available. Both gap conditions prevent an enormous ratio alone from flagging
+otherwise tiny errors.
+
+Spatial grids have 4 columns and 3 rows, with image origin at the top left. Empty
+cells have `null` residuals, **not zero error**. Signed residual vectors use
+`predicted_uv - detected_uv`, in source pixels, aligned with each view's detected
+corner order. Edge corner regions contribute to both adjacent edge bands.
+A view counts once per cell/band, regardless of how many corners it contributes.
+Near-duplicate images can still exaggerate independent support. Band occupancy
+does not imply that its entire length was observed.
+
+The per-image `board_hull_fraction` is the convex hull area of detected corners
+in pixels squared divided by source image area. It includes space between
+corners and must not be read as the fraction of pixels directly measured.
+
+The underlying standard-deviation conventions follow [OpenCV's calibration
+reference](https://docs.opencv.org/4.13.0/d9/d0c/group__calib3d.html). These are local
+fit estimates, not a replacement for independent captures or trajectory truth.
+No new runtime dependency or SLAM tracking/mapping policy is introduced.
+
+### Quality report qualification
+
+The full regression suite passes **158 tests** in `.venv-portability`, including
+all three installed entry points. Both existing environments pass `pip check`.
+
+The same 16/4 rendered checkerboard image split retains 0.069 px fitting RMS and
+0.085 px held-out RMS. Compared with the previous tool's saved camera, the largest
+intrinsics change was 9.1e-13 and the largest distortion change was 1.5e-13
+(numerical roundoff). The richer report records 11 review findings, primarily
+limited repeated spatial support and edge coverage. It does not reinterpret the
+low fitting error as evidence of complete image coverage.
+
+The installed report command rendered the new JSON from `/private/tmp`; a saved
+version 1 report also rendered successfully. Report hashes and packaged module
+contents were checked. HTML tests check content, text escaping, empty/missing
+measurements, failure reports and preservation of existing files. No browser
+surface was available for visual layout inspection in this session.
+
+The 16 previously sampled `GRMN2734.MP4` frames were reprocessed: 12 fitting and
+4 validation images had no board detections. The new JSON and HTML correctly
+report failure, with no camera output. This remains a negative-input test, not a
+real-camera calibration or SLAM accuracy result.
+
+Artifacts (ignored): `output/calibration-quality-2026-09-16/` and
+`output/calibration-quality-dashcam-2026-09-16/`. The synthetic HTML example is
+`output/calibration-quality-2026-09-16/review-final.html`.

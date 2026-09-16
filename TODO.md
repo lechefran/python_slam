@@ -319,6 +319,11 @@ intrinsics. Fits remain explicitly unverified; no measured camera profile for
 
 - [x] Add offline board detection/fitting, capture instructions, source hashes,
   per-view/spatial errors, held-out validation, quality warnings and loader tests.
+- [x] Extend the quality report with actionable per-image/tail/outlier checks,
+  distinct-view cell and edge coverage, fitting/validation comparison, embedded
+  camera/preprocessing metadata and a standalone HTML review of saved evidence.
+  These diagnostics do not refit the camera or remove observations; see the
+  [quality policy](docs/offline-calibration.md#quality-report-review-schema-2).
 - [ ] Collect physical captures matching the dashcam mode; review lens-model
   suitability and held-out residuals before benchmarking a measured profile.
 

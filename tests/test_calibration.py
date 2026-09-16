@@ -112,10 +112,15 @@ def cli_args(root):
 
 def test_rendered_checkerboards_cli_and_slam_loader(tmp_path):
     render_checkerboards(tmp_path)
-    assert main(cli_args(tmp_path)) == 0
+    assert main(cli_args(tmp_path) + ['--report-html', str(tmp_path/'review.html')]) == 0
     camera = json.loads((tmp_path/'camera.json').read_text())
     report = json.loads((tmp_path/'report.json').read_text())
     assert camera['calibration_status'] == 'measured_unverified'
+    assert report['schema_version'] == 2
+    assert camera['schema_version'] == 1
+    assert report['camera_model']['K'] == camera['K']
+    assert report['capture_summary']['fitting'] == {'detected': 16}
+    assert 'Fitting versus held-out validation' in (tmp_path/'review.html').read_text()
     assert camera['quality_report_sha256'] == hashlib.sha256((tmp_path/'report.json').read_bytes()).hexdigest()
     assert report['status'] in ('checks_passed', 'needs_review')
     assert len(report['images']) == 20
@@ -164,12 +169,13 @@ def test_no_board_saves_failure_report_without_camera(tmp_path):
     for folder in ('train', 'validation'):
         (tmp_path/folder).mkdir()
         assert cv2.imwrite(str(tmp_path/folder/'blank.png'), rng.integers(0, 30, (72, 96), dtype=np.uint8))
-    assert main(cli_args(tmp_path)) == 2
+    assert main(cli_args(tmp_path) + ['--report-html', str(tmp_path/'failure.html')]) == 2
     assert not (tmp_path/'camera.json').exists()
     report = json.loads((tmp_path/'report.json').read_text())
     assert report['status'] == 'failed'
     assert 'got 0 and 0' in report['error']
     assert all(row['status'] == 'board_not_found' for row in report['images'])
+    assert 'Calibration failed' in (tmp_path/'failure.html').read_text()
 
 
 @pytest.mark.parametrize('spec', [Board('checkerboard', 2, 6, .02),
@@ -228,3 +234,13 @@ def test_output_collision_and_invalid_nonfinite_config(tmp_path):
         main(args)
     assert not (tmp_path/'camera.json').exists()
     assert not (tmp_path/'report.json').exists()
+
+
+def test_existing_html_is_preserved_before_fitting(tmp_path):
+    path = tmp_path/'review.html'
+    path.write_text('existing report')
+    with pytest.raises(SystemExit):
+        main(cli_args(tmp_path) + ['--report-html', str(path)])
+    assert path.read_text() == 'existing report'
+    assert not (tmp_path/'report.json').exists()
+    assert not (tmp_path/'camera.json').exists()

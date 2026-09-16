@@ -59,6 +59,12 @@ installation, or `.venv/bin/python -m calibration --help` in this checkout.
 Physical captures must match the camera and recording mode; the dashcam road
 clip alone is not calibration input.
 
+Add `--report-html output/calibration-review.html` for a standalone visual review
+of errors, edge coverage and flagged images. To review an existing JSON without
+refitting, use `python-slam-calibration-report report.json --output review.html`.
+See the [quality report guide](docs/offline-calibration.md#quality-report-review-schema-2)
+for threshold meanings and qualification limits.
+
 Supply a JSON file describing the **decoded source image**, for example this schema illustration (values below are not a calibration for `GRMN2734.MP4`):
 
 ```json

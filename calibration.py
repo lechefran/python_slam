@@ -16,6 +16,8 @@ import sys
 import cv2
 import numpy as np
 
+from calibration_report import QUALITY_POLICY, assess_quality, finalize_report, write_html
+
 
 @dataclass(frozen=True)
 class Board:
@@ -124,7 +126,7 @@ def read_views(folder, board, detector, split, report, seen, size):
 
 def residual_summary(views, poses, k, distortion, size):
     """Evaluate raw distorted-pixel residuals and a 4-column, 3-row error grid."""
-    records, residuals, positions = [], [], []
+    records, residuals, positions, view_ids = [], [], [], []
     for view, (rotation, translation) in zip(views, poses, strict=True):
         # OpenCV rvec/tvec is board-to-camera. Positive Z is required before
         # projection, even if an algebraic reprojection error appears small.
@@ -138,25 +140,44 @@ def residual_summary(views, poses, k, distortion, size):
         error = np.linalg.norm(delta, axis=1)
         records.append({'path': view.name, 'corners': len(error),
                         'rms_px': float(np.sqrt(np.mean(error ** 2))),
+                        'median_px': float(np.median(error)),
                         'p95_px': float(np.percentile(error, 95)), 'max_px': float(error.max()),
+                        'mean_residual_uv_px': delta.mean(axis=0).tolist(),
+                        'residuals_uv_px': delta.tolist(),
+                        'board_hull_fraction': float(cv2.contourArea(cv2.convexHull(view.pixels.astype(np.float32))) /
+                                                     (size[0] * size[1])),
                         'rvec_board_to_camera': rotation.ravel().tolist(),
                         'tvec_board_to_camera_m': translation.ravel().tolist()})
         residuals.append(delta)
         positions.append(view.pixels)
+        view_ids.append(np.full(len(error), len(records) - 1))
     delta, pixels = np.concatenate(residuals), np.concatenate(positions)
     error = np.linalg.norm(delta, axis=1)
+    ids = np.concatenate(view_ids)
     cells = np.minimum((pixels / np.array(size) * [4, 3]).astype(int), [3, 2])
     grid = []
     for row in range(3):
         for col in range(4):
             selected = (cells[:, 0] == col) & (cells[:, 1] == row)
             grid.append({'column': col, 'row': row, 'corners': int(selected.sum()),
+                         'views': int(len(np.unique(ids[selected]))),
                          'rms_px': float(np.sqrt(np.mean(error[selected] ** 2))) if selected.any() else None,
                          'mean_residual_uv_px': delta[selected].mean(axis=0).tolist() if selected.any() else None})
+    # A dense board in one image is still just one view. Count each view once
+    # per edge band; corner regions deliberately contribute to both adjacent edges.
+    fraction = QUALITY_POLICY['edge_band_fraction']
+    masks = {'left': pixels[:, 0] < size[0] * fraction,
+             'right': pixels[:, 0] >= size[0] * (1 - fraction),
+             'top': pixels[:, 1] < size[1] * fraction,
+             'bottom': pixels[:, 1] >= size[1] * (1 - fraction)}
+    edges = {edge: {'corners': int(selected.sum()), 'views': int(len(np.unique(ids[selected]))),
+                    'rms_px': float(np.sqrt(np.mean(error[selected] ** 2))) if selected.any() else None}
+             for edge, selected in masks.items()}
     return {'views': records, 'rms_px': float(np.sqrt(np.mean(error ** 2))),
+            'median_px': float(np.median(error)), 'mean_residual_uv_px': delta.mean(axis=0).tolist(),
             'p95_px': float(np.percentile(error, 95)), 'max_px': float(error.max()),
             'occupied_grid_cells': sum(cell['corners'] > 0 for cell in grid),
-            'grid_shape': [3, 4], 'spatial_residuals': grid}
+            'grid_shape': [3, 4], 'spatial_residuals': grid, 'edge_coverage': edges}
 
 
 def fit_camera(training, validation, size):
@@ -208,20 +229,11 @@ def fit_camera(training, validation, size):
     held_out = residual_summary(validation, validation_poses, k, distortion, size)
     normals = np.array([cv2.Rodrigues(r)[0][:, 2] for r in rotations])
     span = float(np.rad2deg(np.arccos(np.clip((normals @ normals.T).min(), -1, 1))))
-    warnings = []
-    if span < 10:
-        warnings.append('Fitting board normals span less than 10 degrees; capture stronger tilts')
-    for label, summary in [('fitting', fit), ('validation', held_out)]:
-        if summary['occupied_grid_cells'] < 9:
-            warnings.append(f'Limited {label} image coverage: fewer than 9/12 occupied grid cells')
-        if summary['rms_px'] > 1:
-            warnings.append(f'{label.capitalize()} RMS exceeds 1 source pixel; inspect images and lens model')
-        for row in summary['views']:
-            row['review_recommended'] = row['rms_px'] > 1
+    assessment = assess_quality(fit, held_out, span)
     return k, distortion.ravel(), {'fitting': fit, 'validation': held_out,
                                   'fitting_normal_span_degrees': span,
                                   'intrinsics_standard_deviations_opencv': std_intrinsics.ravel().tolist(),
-                                  'warnings': warnings}
+                                  **assessment}
 
 
 def write_json(path, payload):
@@ -246,6 +258,7 @@ def parser():
     cli.add_argument('--recording-mode', required=True, help='Resolution, FPS, crop, zoom and stabilization settings')
     cli.add_argument('--output', required=True, type=Path, help='New camera JSON for slam --calibration')
     cli.add_argument('--report', required=True, type=Path, help='New detailed quality report JSON')
+    cli.add_argument('--report-html', type=Path, help='Optional new standalone HTML quality review')
     return cli
 
 
@@ -261,6 +274,11 @@ def main(argv=None):
             cli.error(f'Output already exists: {path}; choose a new path')
         if path.suffix.lower() != '.json':
             cli.error('Output and report must use .json extensions')
+    if args.report_html is not None:
+        if (args.report_html.exists() or args.report_html.is_symlink()
+                or args.report_html.suffix.lower() != '.html'
+                or args.report_html.resolve() in (args.output.resolve(), args.report.resolve())):
+            cli.error('Choose a new, distinct .html report path')
     if not args.camera.strip() or not args.recording_mode.strip():
         cli.error('Camera and recording mode cannot be blank')
     board = Board(args.board, args.columns, args.rows, args.square_size, args.marker_size, args.dictionary)
@@ -268,15 +286,16 @@ def main(argv=None):
         board.validate()
     except ValueError as exc:
         cli.error(str(exc))
-    report = {'schema_version': 1, 'kind': 'camera_calibration_report', 'status': 'failed',
+    report = {'schema_version': 2, 'kind': 'camera_calibration_report', 'status': 'failed',
               'created_utc': datetime.now(timezone.utc).isoformat(),
               'opencv_version': cv2.__version__, 'numpy_version': np.__version__,
               'board': asdict(board), 'board_units': 'metres',
               'camera': args.camera, 'recording_mode': args.recording_mode,
               'images': [], 'warnings': [],
               'policy': {'minimum_fitting_views': 8, 'minimum_validation_views': 3,
-                         'review_rms_px': 1, 'minimum_occupied_grid_cells': 9,
-                         'minimum_normal_span_degrees': 10, 'opencv_calibration_flags': 0},
+                         **QUALITY_POLICY, 'opencv_calibration_flags': 0},
+              'preprocessing': {'resize': False, 'crop': False, 'rectification': False,
+                                'pixel_domain': 'raw_distorted_source', 'exif_orientation': 'ignored'},
               'validation_method': 'Frozen intrinsics; board pose fitted separately to each validation image',
               'intrinsics_standard_deviation_order': ['fx', 'fy', 'cx', 'cy', 'k1', 'k2', 'p1', 'p2',
                                                       'k3', 'k4', 'k5', 'k6', 's1', 's2', 's3', 's4',
@@ -291,6 +310,10 @@ def main(argv=None):
         validation, size = read_views(args.validation_images, board, detector, 'validation', report, seen, size)
         k, distortion, quality = fit_camera(training, validation, size)
         report.update(quality, status='needs_review' if quality['warnings'] else 'checks_passed')
+        report['camera_model'] = {'model': 'pinhole', 'width': size[0], 'height': size[1],
+                                  'K': k.tolist(), 'distortion': distortion.tolist(),
+                                  'distortion_order': ['k1', 'k2', 'p1', 'p2', 'k3']}
+        finalize_report(report)
         camera = {'schema_version': 1, 'model': 'pinhole', 'width': size[0], 'height': size[1],
                   'K': k.tolist(), 'distortion': distortion.tolist(),
                   'distortion_order': ['k1', 'k2', 'p1', 'p2', 'k3'],
@@ -304,13 +327,25 @@ def main(argv=None):
         write_json(args.output, camera)
     except (ValueError, OSError, cv2.error) as exc:
         report.update(status='failed', error=str(exc))
+        finalize_report(report)
         if not args.report.exists():
             try:
                 write_json(args.report, report)
             except (OSError, ValueError):
                 pass
+        if args.report_html is not None:
+            try:
+                write_html(args.report_html, report)
+            except (OSError, ValueError) as html_exc:
+                print(f'HTML report could not be written: {html_exc}', file=sys.stderr)
         print(f'Calibration failed: {exc}', file=sys.stderr)
         return 2
+    if args.report_html is not None:
+        try:
+            write_html(args.report_html, report)
+        except (OSError, ValueError) as exc:
+            print(f'Camera and JSON report saved, but HTML report failed: {exc}', file=sys.stderr)
+            return 2
     print(f"Saved {args.output}: {report['status']}; fitting RMS {quality['fitting']['rms_px']:.3f}px; "
           f"validation RMS {quality['validation']['rms_px']:.3f}px")
     for warning in quality['warnings']:
