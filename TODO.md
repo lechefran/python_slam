@@ -57,6 +57,21 @@ The first centered experiment regressed to 954 poses. The correction addresses s
 - [ ] Qualify stationary-scene support and held-out trajectory accuracy. The distribution improvement does not remove vehicle/hood contamination or replace camera calibration.
 - [ ] Profile the additional matching/triangulation on sustained sequences and verify native Linux execution.
 
+## Robust residual weighting and conditioning update
+
+[Implementation and validation](docs/robust-pose.md) add bounded block-Huber
+pose refinement and checks on the weighted and unweighted pixel Jacobian.
+
+- [x] Downweight larger residual blocks during optimization, with both pixel axes sharing a weight; keep the centered/world-pose contracts and avoid normal-matrix inversion.
+- [x] Bound refinement work and require decreasing fixed-support Huber cost, valid geometry, preserved seed correspondences and lower capped Huber cost on all original inputs before accepting a proposal.
+- [x] Report singular values, numerical rank, dimensionless parameterization, condition number, weighting and step decisions. Reject rank-deficient/unchecked seeds; skip robust updates for full-rank but poorly conditioned support.
+- [x] Check derivatives against independent finite differences, origin/scale invariance, biased-observation accuracy against synthetic truth, planar/collinear/near-collinear support, and failed-proposal isolation.
+- [x] Benchmark the full requested video and keep weighted updates opt-in: the final robust mode retains 1,792 poses versus the 1,796-pose baseline. Conditioning checks remain active by default.
+- [x] Verify the default on all 1,800 frames: with conditioning checks active, every baseline outcome/count and final optimized pose is reproduced exactly. All 80 tests pass.
+- [ ] Recover the four regressed frames (1,719, 1,760, 1,763 and 1,765) under unchanged geometric gates before considering robust updates as the default. Preserve all baseline frame identities; do not tune solely to increase this clip's counts.
+- [ ] Qualify residual scale/noise models, static-scene weighting and pose uncertainty on calibrated held-out sequences; current weights and condition policies are not covariance or calibrated confidence.
+- [ ] Extend conditioning analysis to the anchored bundle-adjustment graph; existing per-edge Huber kernels do not establish full graph observability.
+
 ## Purpose and scope
 
 Improve this small Python monocular SLAM application in four connected areas: camera positioning, feature/landmark and graph-edge calculations, 2D mapping, and 3D mapping. Correctness, measured accuracy, usable operation, and sustained performance take precedence over adding algorithms.

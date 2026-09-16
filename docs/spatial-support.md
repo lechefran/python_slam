@@ -1,5 +1,8 @@
 # Spatial support and landmark replenishment
 
+The subsequent [robust PnP change](robust-pose.md) adds residual weighting and
+Jacobian checks. Use `--no-robust-pnp` when reproducing this earlier benchmark.
+
 ## Result and scope
 
 Spatial landmark replenishment is enabled by default alongside centered pose fitting. On the requested full dashcam replay it preserves **all 1,685 previously accepted frame IDs**, adds **111**, and reaches **1,796 accepted poses**. Tracking continues through the final source frame, 1,799, with no lost frames after initialization.

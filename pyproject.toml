@@ -24,7 +24,7 @@ test = ["pytest>=8,<10"]
 python-slam = "slam:main"
 
 [tool.setuptools]
-py-modules = ["slam", "frame", "geometry", "point", "dmap", "display", "tracking_diagnostics"]
+py-modules = ["slam", "frame", "geometry", "point", "dmap", "display", "tracking_diagnostics", "robust_pose"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,5 +1,9 @@
 # Numerical conditioning of pose fitting
 
+The subsequent [robust PnP change](robust-pose.md) adds residual weighting and
+Jacobian conditioning checks. Add `--no-robust-pnp` to the commands below to
+isolate this earlier solver baseline.
+
 ## Status and use
 
 The subsequent [spatial-support change](spatial-support.md) adds default landmark replenishment and extends the full replay to 1,796 poses. The measurements below isolate the preceding conditioning correction; use `--no-spatial-mapping` to reproduce its 1,685-pose baseline.

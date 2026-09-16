@@ -5,6 +5,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from geometry import ConditionedPoints, add_one, condition_points, denormalize, normalize, pose_rt, spatial_support, valid_pose
+from robust_pose import HUBER_DELTA_PX, inspect_pose, robust_refine
 
 
 class TrackingError(RuntimeError):
@@ -147,7 +148,7 @@ def _solver_points(xyz, condition):
 
 
 def refine_pose(frame, xyz, pixels, rotation, translation, ransac_rows, max_error=3.,
-                require_coverage=True, condition=True):
+                require_coverage=True, condition=True, robust=True):
     """Refine a world-coordinate seed, optionally in a centred/scaled solver frame.
 
     This entry point retains its world-coordinate contract for callers with an
@@ -157,11 +158,11 @@ def refine_pose(frame, xyz, pixels, rotation, translation, ransac_rows, max_erro
     conditioning = _solver_points(xyz, condition)
     local_translation = conditioning.local_translation(cv2.Rodrigues(rotation)[0], translation)
     return _refine_conditioned_pose(frame, xyz, pixels, conditioning, rotation,
-                                    local_translation, ransac_rows, max_error, require_coverage)
+                                    local_translation, ransac_rows, max_error, require_coverage, robust)
 
 
 def _refine_conditioned_pose(frame, xyz, pixels, conditioning, rotation, translation,
-                             ransac_rows, max_error, require_coverage):
+                             ransac_rows, max_error, require_coverage, robust=True):
     """Refit validated consensus at most twice, scoring every original observation.
 
     The native RANSAC mask belongs to an earlier hypothesis. After refinement,
@@ -169,15 +170,23 @@ def _refine_conditioned_pose(frame, xyz, pixels, conditioning, rotation, transla
     that measured support, accepting only a strictly lower capped pixel cost
     under the unchanged physical and spatial gates. The cap scores proposals;
     each native refiner still minimizes ordinary squared error on its subset.
+    The final bounded IRLS proposal uses a block-Huber objective instead.
     """
     candidate, evidence, candidates = _recover_conditioned_pose(
         frame, xyz, pixels, conditioning, rotation, translation, ransac_rows,
         max_error, require_coverage)
+    # A coverage-rejected fit can still provide valid residual support. Refit
+    # that actual support before abandoning the camera, but require the full
+    # coverage gate again before accepting any result. Never loosen its value.
+    if robust and evidence['selected'] is None and candidate['metrics']['gate'] == 'image_coverage':
+        candidate, evidence, candidates = _recover_coverage(
+            frame, xyz, pixels, conditioning, candidate, evidence, candidates, max_error)
     consensus = {'attempted_rounds': 0, 'accepted_rounds': 0, 'rounds': [],
                  'stop_reason': 'primary_rejected' if evidence['selected'] is None else 'disabled'}
     evidence['consensus'] = consensus
     if evidence['selected'] is None or conditioning.method == 'none':
-        return candidate, evidence, candidates
+        return _finish_pose(frame, xyz, pixels, candidate, evidence, candidates,
+                            max_error, require_coverage, robust)
 
     previous_rows = ransac_rows
     for step in range(2):
@@ -210,6 +219,113 @@ def _refine_conditioned_pose(frame, xyz, pixels, conditioning, rotation, transla
         consensus['accepted_rounds'] += 1
     else:
         consensus['stop_reason'] = 'round_limit'
+    evidence['candidates'] = {name: item['metrics'] for name, item in candidates.items()}
+    return _finish_pose(frame, xyz, pixels, candidate, evidence, candidates,
+                        max_error, require_coverage, robust)
+
+
+def _recover_coverage(frame, xyz, pixels, conditioning, candidate, evidence, candidates, max_error):
+    """Try at most two actual-consensus fits for an otherwise physical seed.
+
+    Intermediate fitting may have narrow image support; committing a camera
+    may not. Each round must lower full-input capped squared cost, and an
+    accepted recovery must pass the original complete geometric gates.
+    """
+    recovery = {'attempted_rounds': 0, 'accepted': False}
+    evidence['coverage_recovery'] = recovery
+    fitting = candidate
+    for step in range(2):
+        pose = fitting['pose']
+        proposed, details, proposals = _refine_seed_pose(frame, xyz, pixels, conditioning,
+            cv2.Rodrigues(pose[:3, :3])[0],
+            conditioning.local_translation(pose[:3, :3], pose[:3, 3]),
+            fitting['rows'], max_error, False)
+        recovery['attempted_rounds'] += 1
+        if (details['selected'] is None or proposed['metrics']['clipped_cost_px2']
+                >= fitting['metrics']['clipped_cost_px2']):
+            break
+        fitting = proposed
+        name = f'coverage{step}'
+        checked = _pose_candidate(frame, xyz, pixels, cv2.Rodrigues(proposed['pose'][:3, :3])[0],
+            proposed['pose'][:3, 3], max_error, True)
+        candidates[name] = checked
+        if checked['metrics']['status'] == 'accepted':
+            candidate = checked
+            evidence.update(selected=name, inspected=name)
+            recovery['accepted'] = True
+            break
+    return candidate, evidence, candidates
+
+
+def _finish_pose(frame, xyz, pixels, candidate, evidence, candidates,
+                 max_error, require_coverage, robust):
+    """Check final support conditioning and cautiously accept a robust proposal.
+
+    Freeze the checked support for IRLS. Rank/conditioning are evaluated in
+    normalized local coordinates even for the uncentred native reference mode.
+    Reproject a proposal in world coordinates before it can replace the seed.
+    """
+    coverage_recovery = (robust and evidence['selected'] is None
+                         and candidate['metrics']['gate'] == 'image_coverage')
+    if evidence['selected'] is None and not coverage_recovery:
+        return candidate, evidence, candidates
+    rows, pose = candidate['rows'], candidate['pose']
+    try:
+        local = condition_points(xyz[rows])
+        rotation = pose[:3, :3]
+        translation = local.local_translation(rotation, pose[:3, 3]).ravel()
+        new_r, new_t, report = robust_refine(frame.k, local.points, pixels[rows], rotation, translation, robust)
+    except ValueError as exc:
+        new_r, new_t = None, None
+        report = {'enabled': robust, 'accepted_steps': 0, 'stop_reason': 'numerical_failure', 'error': str(exc)}
+    report['selected'] = False
+    report['coverage_recovery'] = coverage_recovery
+    evidence['robust'] = report
+    initial = report.get('initial')
+    candidate['metrics']['pose_conditioning'] = initial
+    # A deficient seed is not authorized merely because its pixels fit. A
+    # full-rank but poorly conditioned seed remains visible with a warning;
+    # no robust update is attempted in that case.
+    if initial is None or initial['weighted']['rank'] < 6:
+        candidate['metrics'].update(status='rejected', gate='pose_conditioning')
+        evidence['selected'] = None
+    elif new_r is not None and report['accepted_steps']:
+        proposed = _pose_candidate(frame, xyz, pixels, cv2.Rodrigues(new_r)[0],
+            local.world_translation(new_r, new_t), max_error, require_coverage)
+        candidates['robust'] = proposed
+        # Compare the SAME complete population with capped block-Huber loss.
+        # Invalid depth receives the full cap, never a free zero residual.
+        def cost(item):
+            errors = np.linalg.norm(item['projected'] - pixels, axis=1)
+            errors = np.minimum(np.where(np.isfinite(errors), errors, max_error), max_error)
+            return float(np.where(errors <= HUBER_DELTA_PX, errors ** 2,
+                2 * HUBER_DELTA_PX * errors - HUBER_DELTA_PX ** 2).sum())
+
+        before, after = cost(candidate), cost(proposed)
+        report.update(before_full_cost_px2=before, proposed_full_cost_px2=after)
+        if proposed['metrics']['status'] == 'accepted':
+            try:
+                support = proposed['rows']
+                # Newly admitted observations change the condition of the final
+                # pose: inspect that actual support too, not just the IRLS rows.
+                final_local = condition_points(xyz[support])
+                final_t = final_local.local_translation(new_r, proposed['pose'][:3, 3]).ravel()
+                checked, *_ = inspect_pose(frame.k, final_local.points @ new_r.T + final_t, pixels[support])
+                proposed['metrics']['pose_conditioning'] = checked
+            except (ValueError, np.linalg.LinAlgError):
+                checked = None
+            # Downweight marginal observations without silently discarding the
+            # checked consensus used for projection search and map maintenance.
+            support_preserved = bool(np.isin(rows, proposed['rows']).all())
+            report['seed_support_preserved'] = support_preserved
+            if (checked is not None and checked['weighted']['status'] == 'well_conditioned'
+                    and support_preserved
+                    and after < before - 1e-9):
+                candidate = proposed
+                evidence.update(selected='robust', inspected='robust')
+                report['selected'] = True
+        report['selection_reason'] = ('lower_full_huber_cost' if report['selected'] else
+            'seed_support_changed' if report.get('seed_support_preserved') is False else 'proposal_rejected')
     evidence['candidates'] = {name: item['metrics'] for name, item in candidates.items()}
     return candidate, evidence, candidates
 
@@ -317,7 +433,7 @@ def _refine_seed_pose(frame, xyz, pixels, conditioning, rotation, translation,
 
 
 def estimate_pose(frame, points, indices, max_error=3.0, require_coverage=True,
-                  diagnostics=None, trace=None, condition=True):
+                  diagnostics=None, trace=None, condition=True, robust=True):
     """Robust 3D-to-2D pose in map scale; return T_cw and accepted input rows."""
     xyz = np.asarray([point.point for point in points], dtype=np.float64).reshape(-1, 3)
     pixels = np.asarray(frame._kps[indices], dtype=np.float64)
@@ -352,7 +468,7 @@ def estimate_pose(frame, points, indices, max_error=3.0, require_coverage=True,
     if not ok or inliers is None or len(inliers) < 12:
         raise TrackingError('insufficient PnP inliers')
     candidate, refinement, candidates = _refine_conditioned_pose(frame, xyz, pixels, conditioning,
-        rotation, translation, inliers.ravel(), max_error, require_coverage)
+        rotation, translation, inliers.ravel(), max_error, require_coverage, robust)
     pose, selected, metrics = candidate['pose'], candidate['rows'], candidate['metrics']
     if diagnostics is not None:
         diagnostics.update(metrics, refinement=refinement)
@@ -365,6 +481,8 @@ def estimate_pose(frame, points, indices, max_error=3.0, require_coverage=True,
         raise TrackingError('invalid refined PnP pose')
     if metrics['gate'] == 'image_coverage':
         raise TrackingError('map inliers have insufficient image coverage')
+    if metrics['gate'] == 'pose_conditioning':
+        raise TrackingError('invalid or rank-deficient PnP support')
     if diagnostics is not None:
         diagnostics.update(status='accepted', gate='accepted')
     return pose, selected

@@ -29,6 +29,28 @@ def summarize_support(measurements):
     return result
 
 
+def summarize_pose_quality(rows):
+    """Count solver checks by stage; missing diagnostics are not good conditions."""
+    result = {}
+    for stage in ('provisional_pnp', 'final_pnp'):
+        measured = [row['diagnostics']['stages'].get(stage, {}) for row in rows]
+        refinements = [item.get('refinement', {}).get('robust') for item in measured]
+        refinements = [item for item in refinements if item]
+        checks = [item.get('pose_conditioning') for item in measured]
+        checks = [item for item in checks if item]
+        conditions = [item['weighted']['condition_number'] for item in checks
+                      if item['weighted']['condition_number'] is not None]
+        result[stage] = {
+            'checked_poses': len(checks),
+            'weighted_condition_status': dict(Counter(item['weighted']['status'] for item in checks)),
+            'median_weighted_condition': median(conditions) if conditions else None,
+            'max_weighted_condition': max(conditions) if conditions else None,
+            'robust_selected': sum(item['selected'] for item in refinements),
+            'robust_attempted_steps': sum(item.get('attempted_steps', 0) for item in refinements),
+            'robust_stop_reasons': dict(Counter(item['stop_reason'] for item in refinements))}
+    return result
+
+
 def summarize(report, start, end):
     """Keep failed estimates visible; accepted-pose counts alone hide rejection."""
     rows = [row for row in report['frames'] if start <= row['frame_id'] <= end]
@@ -58,6 +80,7 @@ def summarize(report, start, end):
                                          if row['status'] == 'tracking'), None),
             'rejection_gates': dict(gates), 'reasons': dict(Counter(row['reason'] for row in losses)),
             'refinement_methods': dict(methods), 'refinement_fallback_reasons': dict(fallbacks),
+            'pose_quality_focus_frames': summarize_pose_quality(rows),
             'feature_support_all_focus_frames': summarize_support(
                 row['diagnostics']['stages'].get('extraction', {}).get('spatial_support') for row in rows),
             'inlier_support_tracked_focus_frames': summarize_support(
@@ -77,7 +100,9 @@ def compare_baseline(report, baseline):
         and report['camera'] == baseline['camera']
         and all(report['configuration'].get(key) == baseline['configuration'].get(key) for key in config_keys))
     same_solver = (report['configuration'].get('condition_pnp', False)
-                   == baseline['configuration'].get('condition_pnp', False))
+                   == baseline['configuration'].get('condition_pnp', False)
+                   and report['configuration'].get('robust_pnp', False)
+                   == baseline['configuration'].get('robust_pnp', False))
     same_mapping = (report['configuration'].get('spatial_mapping', False)
                     == baseline['configuration'].get('spatial_mapping', False))
     fields = ('timestamp', 'status', 'reason', 'features', 'matches', 'inliers', 'added_points', 'landmarks')
@@ -158,6 +183,8 @@ def main(argv=None):
                      help='Replenish sparse image cells from a longer triangulation baseline')
     cli.add_argument('--condition-pnp', action=argparse.BooleanOptionalAction, default=True,
                      help='Centre/scale pose fitting (default); disable for the legacy reference')
+    cli.add_argument('--robust-pnp', action=argparse.BooleanOptionalAction, default=False,
+                     help='Opt in to block-Huber refinement for comparison with the baseline')
     cli.add_argument('--baseline', type=Path, help='Optional earlier SLAM report for prefix outcome comparison')
     args = cli.parse_args(argv)
     if args.focus_start < 0 or args.focus_end < args.focus_start or args.every < 1:
@@ -179,6 +206,7 @@ def main(argv=None):
         command.extend(['--calibration', str(args.calibration)])
     command.append('--condition-pnp' if args.condition_pnp else '--no-condition-pnp')
     command.append('--spatial-mapping' if args.spatial_mapping else '--no-spatial-mapping')
+    command.append('--robust-pnp' if args.robust_pnp else '--no-robust-pnp')
     sources = [*ROOT.glob('*.py'), Path(__file__), ROOT / 'pyproject.toml']
     write_json(args.output / 'manifest.json', {'schema_version': 1, 'argv': command,
         'source_sha256': {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()

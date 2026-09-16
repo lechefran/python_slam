@@ -86,6 +86,7 @@ Run `.venv/bin/python slam.py --help` for the complete interface. The installed 
 | `--features N` | ORB feature cap (default 2000) |
 | `--condition-pnp` / `--no-condition-pnp` | Centered pose fitting with bounded consensus refits is enabled by default; disable for the legacy reference |
 | `--spatial-mapping` / `--no-spatial-mapping` | Replenish sparse image cells from a longer accepted-camera baseline; enabled by default |
+| `--robust-pnp` / `--no-robust-pnp` | Opt-in block-Huber pose refinement; conditioning checks are always active. Default off pending dashcam coverage qualification |
 | `--mask-bottom FRACTION` | Optional fixed exclusion mask for hood/dashboard; default 0 |
 | `--seed N`, `--threads N` | OpenCV random seed and worker count; defaults 0 and 1 |
 | `--report FILE` | JSON environment/configuration, input hashes, frame outcomes, BA results and accepted `T_cw` poses |
@@ -115,6 +116,8 @@ See [tracking investigation](docs/tracking-diagnostics.md) for reproduction, evi
 PnP refinement now validates its initial and refined hypotheses and can try one VVS fallback when LM fails or worsens the candidate cost. See [pose-refinement behavior and evidence](docs/pose-refinement.md); coverage and residual acceptance thresholds remain unchanged.
 
 [Numerical conditioning](docs/numerical-conditioning.md) documents centered fitting, seed recovery and consensus refits. [Spatial support](docs/spatial-support.md) adds bounded landmark replenishment and concentration diagnostics. Together they retain every baseline accepted frame and reach 1,796 poses on the requested 1,800-frame dashcam replay, with no tracking loss after initialization. Real-road accuracy remains unqualified.
+
+[Robust pose fitting](docs/robust-pose.md) adds residual weighting during optimization and checks the weighted/unweighted pose Jacobian. Conditioning checks are always active; `--robust-pnp` opts into weighted updates. Its full dashcam replay retains 1,792 of the baseline's 1,796 poses, so weighted updates remain off by default while that regression is unresolved.
 
 ## Linux container and CI
 

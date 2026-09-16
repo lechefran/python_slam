@@ -69,13 +69,14 @@ class FrameResult:
 
 
 class SLAM:
-    def __init__(self, k, features=2000, mask_bottom=0.0, condition_pnp=True, spatial_mapping=True):
+    def __init__(self, k, features=2000, mask_bottom=0.0, condition_pnp=True, spatial_mapping=True, robust_pnp=False):
         self.map = Map()
         self.k = k
         self.detector = cv2.ORB_create(nfeatures=features)
         self.reference = None
         self.mask_bottom = mask_bottom
         self.condition_pnp = condition_pnp
+        self.robust_pnp = robust_pnp
         self.spatial_mapping = spatial_mapping
 
     def projection_matches(self, frame, pose, points, indices, diagnostics=None, trace=None):
@@ -254,9 +255,11 @@ class SLAM:
                     # committed until the expanded matches pass full coverage.
                     stage = 'provisional_pnp'
                     stage_start = time.perf_counter()
+                    # Keep the search seed on the established solver path;
+                    # robust updates use the complete post-search population.
                     pose, selected = estimate_pose(frame, points, indices, require_coverage=False,
                                                    diagnostics=observe(stage), trace=snapshot(stage),
-                                                   condition=self.condition_pnp)
+                                                   condition=self.condition_pnp, robust=False)
                     if evidence is not None:
                         evidence['timing_seconds'][stage] = time.perf_counter() - stage_start
                     points = [points[n] for n in selected]
@@ -270,7 +273,7 @@ class SLAM:
                     stage_start = time.perf_counter()
                     frame.pose, selected = estimate_pose(frame, points, indices,
                                                          diagnostics=observe(stage), trace=snapshot(stage),
-                                                         condition=self.condition_pnp)
+                                                         condition=self.condition_pnp, robust=self.robust_pnp)
                     if evidence is not None:
                         evidence['timing_seconds'][stage] = time.perf_counter() - stage_start
                     # Commit only after the final map-based pose passes validation;
@@ -333,6 +336,8 @@ def parser():
                      help='Replenish sparse image cells using a longer triangulation baseline')
     cli.add_argument('--condition-pnp', action=argparse.BooleanOptionalAction, default=True,
                      help='Centre/scale pose fitting with validated consensus refits (default: enabled)')
+    cli.add_argument('--robust-pnp', action=argparse.BooleanOptionalAction, default=False,
+                     help='Opt in to block-Huber refinement; Jacobian checks are always active')
     cli.add_argument('--mask-bottom', type=float, default=0.0, help='Exclude this image-height fraction (0 <= fraction < 1)')
     cli.add_argument('--seed', type=int, default=0)
     cli.add_argument('--threads', type=int, default=1, help='OpenCV worker threads')
@@ -413,7 +418,7 @@ def run(args):
                             'timestamp_source': 'OpenCV CAP_PROP_POS_MSEC', 'scale': 'arbitrary'}
                 if calibration is None:
                     print('Approximate intrinsics: supply --calibration for camera-specific geometry; scale is arbitrary.', file=sys.stderr)
-                tracker = SLAM(k, args.features, args.mask_bottom, args.condition_pnp, args.spatial_mapping)
+                tracker = SLAM(k, args.features, args.mask_bottom, args.condition_pnp, args.spatial_mapping, args.robust_pnp)
                 maps = cv2.initUndistortRectifyMap(k, distortion, None, k, (w, h), cv2.CV_32FC1) if np.any(distortion) else None
                 if not args.headless:
                     from display import Viewer
