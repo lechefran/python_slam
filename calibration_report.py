@@ -212,7 +212,8 @@ def html_report(report):
                              ('radians' if name in ('tau_x', 'tau_y') else 'dimensionless'))
                             for name, value in zip(names, std)]))
     parts.append('<details><summary>Policy, board and reproducibility metadata</summary><pre>' + text(json.dumps(
-        {key: report.get(key) for key in ('policy', 'board', 'board_units', 'source_size', 'preprocessing',
+        {key: report.get(key) for key in ('policy', 'board', 'board_units', 'source_size', 'capture_settings',
+                                         'camera_settings_sha256', 'execution', 'preprocessing',
                                          'opencv_version', 'numpy_version', 'validation_method')}, indent=2)) + '</pre></details>')
     parts.append('<h3>Limits</h3><ul>' + ''.join(f'<li>{text(item)}</li>' for item in report.get('limitations', [])) +
                  '</ul><p>Review flags never remove images or refit the camera automatically. Near-duplicate captures '

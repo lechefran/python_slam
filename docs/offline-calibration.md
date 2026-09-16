@@ -123,7 +123,7 @@ models are outside this initial tool.
 
 ## Output and SLAM integration
 
-The camera JSON is version 1; the quality report is now version 2 (see below). The camera retains the existing runtime keys
+New camera profiles and quality reports both use version 2. Legacy camera files remain readable; see [camera profiles](camera-profiles.md). The camera retains the existing runtime keys
 `model`, `width`, `height`, `K`, and `distortion`. Additional metadata records
 camera/recording mode, board geometry and units, UTC fitting time, quality status,
 and the report path/SHA-256. The report stores dependency versions, source-file
@@ -179,7 +179,7 @@ real-camera calibration quality have not been established by these tests.
 
 ## Quality report review (schema 2)
 
-The calibration JSON remains schema 1 and uses the same camera-model fields.
+New calibration profiles now use schema 2 with the same camera-model fields plus verified provenance; see [camera profiles](camera-profiles.md).
 The **quality report is now schema 2**; it retains the version 1 fields and adds
 structured review checks, per-corner signed residuals, distinct-view spatial
 support, edge-band coverage, capture summaries, and a fitting/validation

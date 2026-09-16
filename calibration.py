@@ -17,6 +17,7 @@ import cv2
 import numpy as np
 
 from calibration_report import QUALITY_POLICY, assess_quality, finalize_report, write_html
+from camera_profile import create_profile, read_json, settings
 
 
 @dataclass(frozen=True)
@@ -256,6 +257,9 @@ def parser():
     cli.add_argument('--dictionary', default='DICT_4X4_50')
     cli.add_argument('--camera', required=True, help='Camera/lens identifier')
     cli.add_argument('--recording-mode', required=True, help='Resolution, FPS, crop, zoom and stabilization settings')
+    cli.add_argument('--camera-settings', type=Path, help='Structured capture settings JSON for a reproducible profile')
+    cli.add_argument('--seed', type=int, default=0, help='OpenCV RNG seed (default: 0)')
+    cli.add_argument('--threads', type=int, default=1, help='OpenCV worker threads (default: 1)')
     cli.add_argument('--output', required=True, type=Path, help='New camera JSON for slam --calibration')
     cli.add_argument('--report', required=True, type=Path, help='New detailed quality report JSON')
     cli.add_argument('--report-html', type=Path, help='Optional new standalone HTML quality review')
@@ -281,6 +285,15 @@ def main(argv=None):
             cli.error('Choose a new, distinct .html report path')
     if not args.camera.strip() or not args.recording_mode.strip():
         cli.error('Camera and recording mode cannot be blank')
+    if args.threads < 1 or not -2147483648 <= args.seed <= 2147483647:
+        cli.error('Threads must be positive and seed must fit a signed 32-bit integer')
+    cv2.setNumThreads(args.threads)
+    cv2.setRNGSeed(args.seed)
+    try:
+        declared, settings_hash = read_json(args.camera_settings) if args.camera_settings else ({'schema_version': 1}, None)
+        capture_settings = settings(declared)
+    except (ValueError, OSError) as exc:
+        cli.error(str(exc))
     board = Board(args.board, args.columns, args.rows, args.square_size, args.marker_size, args.dictionary)
     try:
         board.validate()
@@ -291,6 +304,9 @@ def main(argv=None):
               'opencv_version': cv2.__version__, 'numpy_version': np.__version__,
               'board': asdict(board), 'board_units': 'metres',
               'camera': args.camera, 'recording_mode': args.recording_mode,
+              'capture_settings': capture_settings, 'camera_settings_sha256': settings_hash,
+              'execution': {'seed': args.seed, 'opencv_threads': args.threads,
+                            'calibration_max_iterations': 100, 'calibration_epsilon': 1e-9},
               'images': [], 'warnings': [],
               'policy': {'minimum_fitting_views': 8, 'minimum_validation_views': 3,
                          **QUALITY_POLICY, 'opencv_calibration_flags': 0},
@@ -323,6 +339,7 @@ def main(argv=None):
                   'quality_report': str(args.report.resolve()),
                   'quality_report_sha256': hashlib.sha256(
                       (json.dumps(report, indent=2, allow_nan=False) + '\n').encode()).hexdigest()}
+        camera = create_profile(camera, report, args.report, args.output, capture_settings)
         write_json(args.report, report)
         write_json(args.output, camera)
     except (ValueError, OSError, cv2.error) as exc:

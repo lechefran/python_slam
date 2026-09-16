@@ -326,9 +326,21 @@ intrinsics. Fits remain explicitly unverified; no measured camera profile for
   [quality policy](docs/offline-calibration.md#quality-report-review-schema-2).
 - [ ] Collect physical captures matching the dashcam mode; review lens-model
   suitability and held-out residuals before benchmarking a measured profile.
+- [x] Add portable camera profiles with structured recording settings, canonical
+  content IDs, verified relative quality-report references, fitting implementation
+  hashes and runtime compatibility/provenance records. Legacy files stay readable;
+  unknown settings and declaration-only evidence remain explicit. See
+  [camera profiles](docs/camera-profiles.md).
+- [x] Add a controlled dashcam comparison runner: isolated sequential pairs,
+  input/code fingerprints, common settings, exact pose-coverage changes,
+  common-frame residual/spatial diagnostics and descriptive timing/retention.
+  See [comparison workflow](docs/controlled-dashcam-comparison.md).
+- [ ] Run and qualify the measured-profile versus approximate-camera comparison
+  once matching physical dashcam calibration captures/profile are available.
+  Repeatability controls do not satisfy this accuracy/calibration requirement.
 
 - **Finding:** `slam.py:158–160` assumes one focal length and a centred principal point; there is no distortion model or calibration input.
-- [ ] Define a versioned calibration file: source dimensions, `fx/fy/cx/cy`, lens model, distortion coefficients, calibration date/provenance, and recording mode. Reject non-finite or implausible matrices.
+- [x] Define a versioned calibration file: source dimensions, `fx/fy/cx/cy`, lens model, distortion coefficients, calibration date/provenance, and recording mode. Reject non-finite or implausible matrices. Offline fitting applies broad plausibility guards; profile loading verifies geometry and the linked fit report.
 - [ ] Provide checkerboard/ChArUco capture and offline fitting instructions, with varied board orientations and coverage of image edges. Preserve board dimensions and units; test on held-out calibration images.
 - [ ] Choose pinhole versus fisheye from the lens and residual evidence. Use either rectified-image pixels with the rectified matrix or consistently undistorted normalized points; do not undistort twice or mix raw and rectified residuals.
 - [ ] Precompute image-remap tables when rectifying images. Save valid-pixel masks and the exact matrix for the output view. Verify whether digital stabilization/cropping changes the camera model over time.

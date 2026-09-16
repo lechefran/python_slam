@@ -202,6 +202,7 @@ def main(argv=None):
     cli.add_argument('--focus-end', type=int, default=1000)
     cli.add_argument('--every', type=int, default=10)
     cli.add_argument('--calibration', type=Path)
+    cli.add_argument('--camera-settings', type=Path)
     cli.add_argument('--feature-mask', type=Path)
     cli.add_argument('--focal', type=float, default=525)
     cli.add_argument('--spatial-mapping', action=argparse.BooleanOptionalAction, default=True,
@@ -233,6 +234,8 @@ def main(argv=None):
                '--diagnostics-end', str(args.focus_end), '--diagnostics-every', str(args.every)]
     if args.calibration:
         command.extend(['--calibration', str(args.calibration)])
+    if args.camera_settings:
+        command.extend(['--camera-settings', str(args.camera_settings)])
     if args.feature_mask:
         command.extend(['--feature-mask', str(args.feature_mask)])
     command.append('--condition-pnp' if args.condition_pnp else '--no-condition-pnp')

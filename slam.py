@@ -24,6 +24,7 @@ from point import Point
 from recovery import RecoveryKeyframes
 from feature_mask import prepare_feature_mask
 from observation_quality import write_quality_report
+from camera_profile import check_capture, load_calibration, read_json, settings, validate_calibration
 
 
 def camera_parameters(width, height, focal=525.0, max_width=1024, calibration=None):
@@ -38,17 +39,9 @@ def camera_parameters(width, height, focal=525.0, max_width=1024, calibration=No
     if calibration is None:
         k = np.array([[focal, 0, width / 2], [0, focal, height / 2], [0, 0, 1.0]])
     else:
-        if calibration.get('model') != 'pinhole':
-            raise ValueError('Only pinhole calibration is supported; rectify other lens models externally')
+        k, distortion = validate_calibration(calibration)
         if calibration.get('width') != width or calibration.get('height') != height:
             raise ValueError('Calibration dimensions do not match the decoded source image')
-        k = np.asarray(calibration.get('K'), dtype=float)
-        distortion = np.asarray(calibration.get('distortion', [0] * 5), dtype=float)
-        if (k.shape != (3, 3) or not np.isfinite(k).all() or k[0, 0] <= 0 or k[1, 1] <= 0
-                or not np.allclose(k[2], [0, 0, 1]) or abs(k[0, 1]) > 1e-12 or abs(k[1, 0]) > 1e-12):
-            raise ValueError('Calibration K must be a finite zero-skew pinhole matrix with positive focal lengths')
-        if distortion.ndim != 1 or len(distortion) not in (4, 5, 8, 12, 14) or not np.isfinite(distortion).all():
-            raise ValueError('Invalid pinhole distortion coefficients')
     processed_width = min(width, max_width)
     processed_height = max(1, int(height * processed_width / width))
     # Scale the entire intrinsics row, including principal point, after resizing.
@@ -589,6 +582,7 @@ def parser():
     cli.add_argument('--width', type=int, default=1024, help='Maximum processed image width')
     cli.add_argument('--focal', type=float, default=os.getenv('F', '525'), help='Approximate focal length in source pixels')
     cli.add_argument('--calibration', type=Path, help='Pinhole JSON calibration at source resolution')
+    cli.add_argument('--camera-settings', type=Path, help='Declare recording settings to compare with a camera profile')
     cli.add_argument('--features', type=int, default=2000)
     cli.add_argument('--spatial-mapping', action=argparse.BooleanOptionalAction, default=True,
                      help='Replenish sparse image cells using a longer triangulation baseline')
@@ -608,6 +602,7 @@ def parser():
     cli.add_argument('--seed', type=int, default=0)
     cli.add_argument('--threads', type=int, default=1, help='OpenCV worker threads')
     cli.add_argument('--report', type=Path, help='Save JSON counts, outcomes and accepted world-to-camera poses')
+    cli.add_argument('--diagnostics', action='store_true', help='Include tracking metrics in the report without image overlays')
     cli.add_argument('--diagnostics-dir', type=Path, help='New directory for tracking evidence and sampled PNG overlays')
     cli.add_argument('--diagnostics-start', type=int, default=850, help='First source frame to capture (inclusive)')
     cli.add_argument('--diagnostics-end', type=int, default=1000, help='Last source frame to capture (inclusive)')
@@ -631,19 +626,24 @@ def run(args):
         raise ValueError('--hold requires the desktop viewer')
     if args.diagnostics_start < 0 or args.diagnostics_end < args.diagnostics_start or args.diagnostics_every < 1:
         raise ValueError('Invalid diagnostic frame range or capture stride')
-    calibration = json.loads(args.calibration.read_text()) if args.calibration else None
-    if calibration is not None and not isinstance(calibration, dict):
-        raise ValueError('Calibration must be a JSON object')
+    calibration, profile_info, profile_inputs = load_calibration(args.calibration) if args.calibration else (None, None, [])
+    declared_settings, settings_hash = None, None
+    if args.camera_settings:
+        if calibration is None:
+            raise ValueError('--camera-settings requires --calibration')
+        declared_settings, settings_hash = read_json(args.camera_settings)
+        declared_settings = settings(declared_settings)
     if args.quality_report and not args.observation_history:
         raise ValueError('--quality-report requires observation history')
-    inputs = {p.resolve() for p in (args.video, args.calibration, args.feature_mask) if p is not None}
+    inputs = {p.resolve() for p in (args.video, args.calibration, args.feature_mask, args.camera_settings) if p is not None}
+    inputs.update(profile_inputs)
     outputs = set()
     for output in (args.report, args.quality_report):
         if output is None:
             continue
         paths = {output.resolve(), output.with_name(output.name + '.tmp').resolve()}
         if paths & inputs:
-            raise ValueError('Report must not overwrite video, calibration or feature mask')
+            raise ValueError('Report must not overwrite video, calibration, profile provenance, camera settings or feature mask')
         if paths & outputs:
             raise ValueError('Trajectory and quality reports must use distinct paths, including temporary files')
         outputs.update(paths)
@@ -688,11 +688,28 @@ def run(args):
                 raise ValueError('Decoder returned invalid/non-increasing timestamps')
             if tracker is None:
                 source_h, source_w = image.shape[:2]
+                if calibration:
+                    metadata = {'source_size': [source_w, source_h], 'profile': profile_info,
+                                'calibration_status': 'provided', 'declared_camera_settings': declared_settings,
+                                'camera_settings_sha256': settings_hash}
+                compatibility = check_capture(calibration, source_w, source_h, capture.get(cv2.CAP_PROP_FPS),
+                                              declared_settings) if calibration else None
                 w, h, k, distortion = camera_parameters(source_w, source_h, args.focal, args.width, calibration)
                 metadata = {'source_size': [source_w, source_h], 'processed_size': [w, h],
                             'K': k.tolist(), 'distortion': distortion.tolist(),
                             'calibration_status': 'provided' if calibration else 'approximate',
                             'timestamp_source': 'OpenCV CAP_PROP_POS_MSEC', 'scale': 'arbitrary'}
+                if calibration:
+                    metadata.update(profile=profile_info, compatibility=compatibility,
+                                    declared_camera_settings=declared_settings, camera_settings_sha256=settings_hash,
+                                    source_K=calibration['K'],
+                                    preprocessing={'scale_xy': [w/source_w, h/source_h],
+                                                   'resize_interpolation': 'INTER_AREA', 'crop': None,
+                                                   'rectified': bool(np.any(distortion)),
+                                                   'remap_interpolation': 'INTER_LINEAR',
+                                                   'pose_pixel_domain': 'processed_rectified' if np.any(distortion) else 'processed_pinhole'})
+                    if compatibility['status'] != 'matched_available_evidence':
+                        print('Camera profile: some recording settings remain unverified; see camera.compatibility in the report.', file=sys.stderr)
                 if calibration is None:
                     print('Approximate intrinsics: supply --calibration for camera-specific geometry; scale is arbitrary.', file=sys.stderr)
                 maps = cv2.initUndistortRectifyMap(k, distortion, None, k, (w, h), cv2.CV_32FC1) if np.any(distortion) else None
@@ -713,7 +730,7 @@ def run(args):
             if maps is not None:
                 image = cv2.remap(image, *maps, cv2.INTER_LINEAR)
             frame, result = tracker.process(image, frame_id, timestamp,
-                diagnostics=diagnostic_writer is not None,
+                diagnostics=args.diagnostics or diagnostic_writer is not None,
                 capture_trace=diagnostic_writer is not None and diagnostic_writer.captures(frame_id))
             results.append(result)
             if diagnostic_writer:
@@ -756,13 +773,18 @@ def run(args):
                'states': dict(Counter(r.status for r in results)), 'elapsed_seconds': elapsed,
                'frames': [asdict(r) for r in results], 'poses': poses,
                'landmarks': len(tracker.map.points) if tracker else 0,
+               'landmark_retention': {'created': tracker.map.max_point,
+                                      'live': len(tracker.map.points),
+                                      'retired': tracker.map.max_point - len(tracker.map.points),
+                                      'live_fraction': len(tracker.map.points) / tracker.map.max_point if tracker.map.max_point else None}
+                                     if tracker else None,
                'landmark_quality': tracker.map.maturity_summary() if tracker and tracker.map.landmark_maturity else None,
                'observation_quality': tracker.map.observation_summary() if tracker else None}
     if args.report or args.quality_report:
         with args.video.open('rb') as handle:
             summary['video_sha256'] = hashlib.file_digest(handle, 'sha256').hexdigest()
         if args.calibration:
-            summary['calibration_sha256'] = hashlib.sha256(args.calibration.read_bytes()).hexdigest()
+            summary['calibration_sha256'] = profile_info['file_sha256']
     if args.quality_report:
         last_id = results[-1].frame_id if results else args.start_frame
         quality = {'schema_version': 1, 'kind': 'landmark_observation_quality',

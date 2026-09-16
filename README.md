@@ -65,6 +65,18 @@ refitting, use `python-slam-calibration-report report.json --output review.html`
 See the [quality report guide](docs/offline-calibration.md#quality-report-review-schema-2)
 for threshold meanings and qualification limits.
 
+New calibrations are [reproducible camera profiles](docs/camera-profiles.md), with
+structured `--camera-settings`, stable content IDs and verified quality-report
+provenance. Inspect one with `python-slam-camera-profile camera.json`. SLAM checks
+decoded dimensions/FPS and supplied recording settings, and records unverified
+fields explicitly. Legacy calibration files remain supported.
+
+Use the [controlled dashcam comparison](docs/controlled-dashcam-comparison.md)
+to replay identical inputs with baseline/candidate camera models in fresh
+processes, compare exact pose coverage and common-frame diagnostics, and retain
+run provenance. Without a measured dashcam profile, use its explicitly labelled
+repeatability-control mode.
+
 Supply a JSON file describing the **decoded source image**, for example this schema illustration (values below are not a calibration for `GRMN2734.MP4`):
 
 ```json

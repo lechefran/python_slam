@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "camera_id": "replace-with-camera-identifier",
+  "lens_id": null,
+  "mode_id": "replace-with-recording-mode-identifier",
+  "fps": {"numerator": 30000, "denominator": 1001},
+  "crop": null,
+  "stabilization": "unknown",
+  "digital_zoom": null,
+  "focus_mode": "unknown",
+  "focus_setting": null
+}

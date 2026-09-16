@@ -58,14 +58,16 @@ def test_known_intrinsics_distortion_and_held_out():
     assert sum(c['corners'] for c in report['validation']['spatial_residuals']) == 4 * 54
     assert len(report['fitting']['views']) == 16
     # Corrupt held-out observations only: intrinsics stay unchanged within
-    # solver roundoff, while validation residuals reveal the damage.
+    # solver roundoff, while validation residuals reveal the damage. The native
+    # solver's stopping tolerance is relative; use sub-micropixel agreement,
+    # not bitwise equality across repeated floating-point decompositions.
     noisy = [View(v.name, v.objects, v.pixels.copy()) for v in views[16:]]
     rng = np.random.default_rng(4)
     for v in noisy:
         v.pixels += rng.normal(0, 2, v.pixels.shape).astype(np.float32)
     other_k, other_dist, other = fit_camera(views[:16], noisy, SIZE)
-    np.testing.assert_allclose(other_k, k, rtol=0, atol=1e-9)
-    np.testing.assert_allclose(other_dist, distortion, rtol=0, atol=1e-9)
+    np.testing.assert_allclose(other_k, k, rtol=0, atol=1e-7)
+    np.testing.assert_allclose(other_dist, distortion, rtol=0, atol=1e-7)
     assert other['validation']['rms_px'] > 1
     assert any('Validation RMS' in message for message in other['warnings'])
 
@@ -117,7 +119,7 @@ def test_rendered_checkerboards_cli_and_slam_loader(tmp_path):
     report = json.loads((tmp_path/'report.json').read_text())
     assert camera['calibration_status'] == 'measured_unverified'
     assert report['schema_version'] == 2
-    assert camera['schema_version'] == 1
+    assert camera['schema_version'] == 2
     assert report['camera_model']['K'] == camera['K']
     assert report['capture_summary']['fitting'] == {'detected': 16}
     assert 'Fitting versus held-out validation' in (tmp_path/'review.html').read_text()

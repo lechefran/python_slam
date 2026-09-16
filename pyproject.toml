@@ -24,9 +24,10 @@ test = ["pytest>=8,<10"]
 python-slam = "slam:main"
 python-slam-calibrate = "calibration:main"
 python-slam-calibration-report = "calibration_report:main"
+python-slam-camera-profile = "camera_profile:main"
 
 [tool.setuptools]
-py-modules = ["slam", "frame", "geometry", "point", "dmap", "display", "tracking_diagnostics", "robust_pose", "recovery", "feature_mask", "observation_quality", "calibration", "calibration_report"]
+py-modules = ["slam", "frame", "geometry", "point", "dmap", "display", "tracking_diagnostics", "robust_pose", "recovery", "feature_mask", "observation_quality", "calibration", "calibration_report", "camera_profile"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
