@@ -45,8 +45,9 @@ def test_invalid_frame_range_and_report_does_not_overwrite_input(tmp_path):
     assert result.returncode == 1 and 'beyond' in result.stderr
 
 
-def test_installed_entrypoint_away_from_checkout(tmp_path):
-    command = Path(sys.executable).with_name('python-slam')
+@pytest.mark.parametrize('entrypoint', ['python-slam', 'python-slam-calibrate'])
+def test_installed_entrypoint_away_from_checkout(tmp_path, entrypoint):
+    command = Path(sys.executable).with_name(entrypoint)
     if not command.exists():
         pytest.skip('Run after installing the package to verify its entry point')
     # Running elsewhere prevents the source directory from masking a packaging

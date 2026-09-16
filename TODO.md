@@ -310,6 +310,18 @@ Use the current standardized `[project]` metadata format rather than hardcoding 
 
 ### CAM-03 — Add real calibration and a consistent distortion path [P1]
 
+**Current progress (2026-09-16):** Runtime calibration loading, resize scaling and
+rectification already exist. The new [offline calibration tool](docs/offline-calibration.md)
+fits checkerboard/ChArUco image sets, writes compatible versioned camera JSON and
+a provenance/quality report, and evaluates separate held-out views with frozen
+intrinsics. Fits remain explicitly unverified; no measured camera profile for
+`GRMN2734.MP4` has been established. The historical finding below predates these changes.
+
+- [x] Add offline board detection/fitting, capture instructions, source hashes,
+  per-view/spatial errors, held-out validation, quality warnings and loader tests.
+- [ ] Collect physical captures matching the dashcam mode; review lens-model
+  suitability and held-out residuals before benchmarking a measured profile.
+
 - **Finding:** `slam.py:158–160` assumes one focal length and a centred principal point; there is no distortion model or calibration input.
 - [ ] Define a versioned calibration file: source dimensions, `fx/fy/cx/cy`, lens model, distortion coefficients, calibration date/provenance, and recording mode. Reject non-finite or implausible matrices.
 - [ ] Provide checkerboard/ChArUco capture and offline fitting instructions, with varied board orientations and coverage of image edges. Preserve board dimensions and units; test on held-out calibration images.

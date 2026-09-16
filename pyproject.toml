@@ -22,9 +22,10 @@ test = ["pytest>=8,<10"]
 
 [project.scripts]
 python-slam = "slam:main"
+python-slam-calibrate = "calibration:main"
 
 [tool.setuptools]
-py-modules = ["slam", "frame", "geometry", "point", "dmap", "display", "tracking_diagnostics", "robust_pose", "recovery", "feature_mask", "observation_quality"]
+py-modules = ["slam", "frame", "geometry", "point", "dmap", "display", "tracking_diagnostics", "robust_pose", "recovery", "feature_mask", "observation_quality", "calibration"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

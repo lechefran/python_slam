@@ -52,6 +52,13 @@ Press **Space** to pause/resume and **Q/Esc** to close. The Matplotlib toolbar s
 
 ## Camera calibration
 
+Use the headless [offline calibration tool](docs/offline-calibration.md) to fit a
+camera from checkerboard or ChArUco photographs, with a separate held-out image
+set and a detailed quality report. Run `python-slam-calibrate --help` after
+installation, or `.venv/bin/python -m calibration --help` in this checkout.
+Physical captures must match the camera and recording mode; the dashcam road
+clip alone is not calibration input.
+
 Supply a JSON file describing the **decoded source image**, for example this schema illustration (values below are not a calibration for `GRMN2734.MP4`):
 
 ```json
