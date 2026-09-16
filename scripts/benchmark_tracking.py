@@ -122,6 +122,8 @@ def compare_baseline(report, baseline):
                      == baseline['configuration'].get('recovery', False))
     same_mapping = (report['configuration'].get('spatial_mapping', False)
                     == baseline['configuration'].get('spatial_mapping', False))
+    same_maturity = (report['configuration'].get('landmark_maturity', False)
+                     == baseline['configuration'].get('landmark_maturity', False))
     same_mask = ((report.get('feature_mask') or {}).get('effective_sha256')
                  == (baseline.get('feature_mask') or {}).get('effective_sha256')
                  and report['configuration'].get('mask_bottom', 0) == baseline['configuration'].get('mask_bottom', 0))
@@ -154,6 +156,7 @@ def compare_baseline(report, baseline):
     return {'compatible_inputs': compatible, 'same_solver_configuration': same_solver,
             'same_mapping_configuration': same_mapping, 'same_recovery_configuration': same_recovery,
             'same_feature_mask': same_mask,
+            'same_landmark_maturity': same_maturity,
             'coverage_comparison': coverage, 'compared_frames': len(report['frames']),
             'spatial_support_common_accepted_frames': {'baseline': summarize_support(spatial_before),
                                                        'current': summarize_support(spatial_after)},
@@ -208,6 +211,7 @@ def main(argv=None):
     cli.add_argument('--robust-pnp', action=argparse.BooleanOptionalAction, default=False,
                      help='Opt in to block-Huber refinement for comparison with the baseline')
     cli.add_argument('--recovery', action=argparse.BooleanOptionalAction, default=True)
+    cli.add_argument('--landmark-maturity', action=argparse.BooleanOptionalAction, default=False)
     cli.add_argument('--baseline', type=Path, help='Optional earlier SLAM report for prefix outcome comparison')
     args = cli.parse_args(argv)
     if args.focus_start < 0 or args.focus_end < args.focus_start or args.every < 1:
@@ -233,6 +237,7 @@ def main(argv=None):
     command.append('--spatial-mapping' if args.spatial_mapping else '--no-spatial-mapping')
     command.append('--robust-pnp' if args.robust_pnp else '--no-robust-pnp')
     command.append('--recovery' if args.recovery else '--no-recovery')
+    command.append('--landmark-maturity' if args.landmark_maturity else '--no-landmark-maturity')
     sources = [*ROOT.glob('*.py'), Path(__file__), ROOT / 'pyproject.toml']
     write_json(args.output / 'manifest.json', {'schema_version': 1, 'argv': command,
         'source_sha256': {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()

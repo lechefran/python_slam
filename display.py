@@ -59,10 +59,14 @@ class Viewer:
             if self.image_artist is None:
                 self.image_artist = self.image_axes.imshow(rgb)
                 self.image_axes.axis('off')
+                styles = [('#00d5ff', 'ORB feature'), ('#55ff55', 'Mapped ORB')]
+                if map3d.landmark_maturity:
+                    styles = [('#00d5ff', 'ORB feature'), ('#55ff55', 'Active landmark'),
+                              ('#ff70ff', 'Candidate landmark')]
                 self.feature_artists = [self.image_axes.scatter(
                     [], [], s=18, facecolors='none', edgecolors=color, linewidths=.7,
                     label=label, visible=self.show_features)
-                    for color, label in (('#00d5ff', 'ORB feature'), ('#55ff55', 'Mapped ORB'))]
+                    for color, label in styles]
                 self.feature_legend = self.image_axes.legend(
                     loc='lower left', fontsize=8, facecolor='#111111',
                     labelcolor='white', framealpha=.75)
@@ -86,7 +90,11 @@ class Viewer:
             # camera rays. Read live associations after culling; rings are a
             # display layer and do not alter the image or tracking inputs.
             mapped = np.array([point is not None and not point.deleted for point in frame.pts], dtype=bool)
-            for artist, selected in zip(self.feature_artists, (~mapped, mapped)):
+            masks = (~mapped, mapped)
+            if map3d.landmark_maturity:
+                active = np.array([point is not None and point.state == 'active' for point in frame.pts], dtype=bool)
+                masks = (~mapped, active, mapped & ~active)
+            for artist, selected in zip(self.feature_artists, masks):
                 artist.set_offsets(frame._kps[selected])
             self.image_axes.set_title(f'Frame {frame.id}: {status}\nSpace: pause | O: ORB | M: exclusions (orange) | Q: close', fontsize=10)
             axes = self.map_axes

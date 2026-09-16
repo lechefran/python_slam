@@ -90,6 +90,7 @@ Run `.venv/bin/python slam.py --help` for the complete interface. The installed 
 | `--recovery` / `--no-recovery` | Recover failed tracking against a bounded archive of older accepted views; enabled by default |
 | `--mask-bottom FRACTION` | Optional fixed exclusion mask for hood/dashboard; default 0 |
 | `--feature-mask FILE.png` | Source-resolution binary grayscale mask: black excludes feature centres, white allows them; combined with the bottom strip |
+| `--landmark-maturity` / `--no-landmark-maturity` | Opt-in candidate validation and active-only pose/recovery/BA support; default off pending coverage qualification |
 | `--seed N`, `--threads N` | OpenCV random seed and worker count; defaults 0 and 1 |
 | `--report FILE` | JSON environment/configuration, input hashes, frame outcomes, BA results and accepted `T_cw` poses |
 | `--diagnostics-dir DIR` | New directory for sampled tracking overlays and numeric evidence; use with `--report` |
@@ -107,6 +108,16 @@ the tracker's actual pixel locations on corners and textured edges; they are
 not a separate edge detector. Press **O** to hide/show the markers, including
 while paused; **Space** pauses and **Q/Esc** closes the viewer. The overlay is
 display-only and does not change tracking or the source video.
+
+With `--landmark-maturity`, new landmarks remain candidates until a later
+accepted observation and adequate parallax support promotion. The viewer uses
+**magenta** for candidates and **green** for active landmarks. A limited initial
+bootstrap avoids requiring mature landmarks before the first map-based pose.
+See [landmark maturity](docs/landmark-maturity.md) for lifecycle rules,
+diagnostics, and qualification limits. This option is off by default.
+The experimental dashcam run accepts only three poses, versus the unchanged
+1,796-pose default, because mature support loses image coverage at frame 7.
+Use the default policy for normal dashcam runs.
 
 ### Configurable exclusion masks
 

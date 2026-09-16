@@ -39,11 +39,18 @@ def camera_vertex(frame, identifier, fixed):
 
 
 class Map:
-    def __init__(self):
+    def __init__(self, landmark_maturity=False):
         self.frames = []
         self.points = []
         self.max_point = 0
         self.next_frame_id = 0
+        self.landmark_maturity = landmark_maturity
+        self.landmark_counts = {'candidate': 0, 'active': 0, 'outlier': 0, 'retired': 0}
+        self.maturity_events = {'promotions': 0, 'demotions': 0}
+
+    def maturity_summary(self):
+        """Live candidate/active counts; outlier/retired counts are cumulative."""
+        return {'enabled': self.landmark_maturity, **self.landmark_counts, **self.maturity_events}
 
     def add_frame(self, frame):
         if frame in self.frames or any(item.id == frame.id for item in self.frames):
@@ -60,7 +67,7 @@ class Map:
         for point in points:
             if point.point.shape != (3,) or not np.isfinite(point.point).all():
                 raise ValueError('Invalid landmark coordinates')
-            if point.deleted or len(point.frames) != len(point.idx) or len(set(point.frames)) != len(point.frames):
+            if point.deleted or point.state not in ('candidate', 'active') or len(point.frames) != len(point.idx) or len(set(point.frames)) != len(point.frames):
                 raise ValueError('Invalid landmark observation history')
             for frame, index in zip(point.frames, point.idx):
                 if frame not in frames or frame.pts[index] is not point:
@@ -91,8 +98,12 @@ class Map:
                     point.remove_observation(frame)
         for point in list(self.points):
             last_seen = max((frame.id for frame in point.frames), default=-1)
-            if len(point.frames) < 2 or (len(point.frames) <= 2 and current_id - last_seen > stale_after):
-                point.delete_point()
+            if self.landmark_maturity:
+                point.refresh_maturity()
+            expired_candidate = (self.landmark_maturity and point.state == 'candidate'
+                                 and point.born_frame_id is not None and current_id - point.born_frame_id > 30)
+            if len(point.frames) < 2 or expired_candidate or (len(point.frames) <= 2 and current_id - last_seen > stale_after):
+                point.delete_point('outlier' if len(point.frames) < 2 else 'stale')
                 removed += 1
         return removed
 
@@ -110,7 +121,8 @@ class Map:
         self.check_integrity()
         local = set(self.frames if local_window is None else self.frames[-local_window:])
         anchors = set(self.frames[:2])
-        points = [p for p in self.points if len(p.frames) >= 2 and any(f in local for f in p.frames)]
+        points = [p for p in self.points if len(p.frames) >= 2 and any(f in local for f in p.frames)
+                  and (not self.landmark_maturity or p.state == 'active')]
         points.sort(key=lambda p: (-sum(f in local for f in p.frames), -p.frames[-1].id, p.id))
         points = points[:max_points]
         if not points:

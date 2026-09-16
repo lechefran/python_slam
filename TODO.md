@@ -96,6 +96,20 @@ pose refinement and checks on the weighted and unweighted pixel Jacobian.
 
 Implementation and qualification: [exclusion masks](docs/exclusion-masks.md).
 
+## Landmark maturity update
+
+- [x] Implement opt-in candidate/active/outlier/retired states, creation-frame tracking and bounded geometric promotion evidence.
+- [x] Require three accepted views including later support, positive depth, <=3-pixel residuals and >=1-degree parallax; keep a limited two-view initialization bootstrap.
+- [x] Estimate normal/recovered poses and BA from active landmarks, then independently validate candidate observations against the committed camera.
+- [x] Reassess support after observation removal and scheduled BA/culling; retire expired candidates and preserve reciprocal links.
+- [x] Report state counts and transitions, separate candidate-validation evidence from PnP inliers, and display candidates distinctly.
+- [x] Pass 123 regression tests and native viewer checks; preserve all 1,796 default dashcam poses exactly. Keep maturity opt-in: its active-only run accepts only frames 0, 5 and 6 before losing image coverage.
+- [ ] Resolve the bootstrap-to-established-support transition on independent scenes before promoting this policy; stalled candidates must not be treated as independently validated support merely to recover frame counts.
+- [ ] Qualify active-only tracking on calibrated held-out data and preserve the complete dashcam baseline before enabling it by default.
+- [ ] Complete MAP-04's descriptor representative, visibility-based reobservation ratios, viewing/depth models and uncertainty validation; maturity alone does not identify moving objects.
+
+See [landmark maturity](docs/landmark-maturity.md) for policy and evidence.
+
 ## Purpose and scope
 
 Improve this small Python monocular SLAM application in four connected areas: camera positioning, feature/landmark and graph-edge calculations, 2D mapping, and 3D mapping. Correctness, measured accuracy, usable operation, and sustained performance take precedence over adding algorithms.
@@ -440,7 +454,7 @@ MAGSAC does not eliminate the need for a useful noise/termination threshold, and
 
 ### MAP-04 — Add landmark maturity, uncertainty, and quality history [P1]
 
-- [ ] Distinguish candidate, active, outlier, and retired landmarks. Delay promotion until sufficient independent observations and baseline support exist.
+- [x] Distinguish candidate, active, outlier, and retired landmarks. Delay promotion until sufficient independent observations and baseline support exist. Implemented as an opt-in policy; see [qualification limits](docs/landmark-maturity.md).
 - [ ] Track observation count, successful re-observation ratio, age, parallax, residual history, representative descriptor, viewing direction, and scale/depth range.
 - [ ] Prefer stronger-baseline triangulation partners rather than creating every point from immediately adjacent frames. Consider inverse-depth candidates only if measured long-range conditioning problems justify the added representation.
 - [ ] Treat uncertainty estimates honestly: heuristic confidence is not a statistical covariance. Verify any propagated uncertainty on controlled noisy scenes.

@@ -70,12 +70,13 @@ class FrameResult:
     ba: dict | None = None
     diagnostics: dict | None = None
     recovered_from: int | None = None
+    landmark_quality: dict | None = None
 
 
 class SLAM:
     def __init__(self, k, features=2000, mask_bottom=0.0, condition_pnp=True, spatial_mapping=True, robust_pnp=False,
-                 recovery=True, feature_mask=None):
-        self.map = Map()
+                 recovery=True, feature_mask=None, landmark_maturity=False):
+        self.map = Map(landmark_maturity=landmark_maturity)
         self.k = k
         self.detector = cv2.ORB_create(nfeatures=features)
         self.reference = None
@@ -97,6 +98,12 @@ class SLAM:
         self.recovery = recovery
         self.keyframes = RecoveryKeyframes()
 
+    def pose_landmark(self, point, recovery=False):
+        """New points cannot estimate poses, except the initial two-view bootstrap."""
+        return (point is not None and not point.deleted and
+                (not self.map.landmark_maturity or point.state == 'active' or
+                 (not recovery and len(self.map.frames) == 2 and point.bootstrap)))
+
     def extraction_mask(self, shape):
         """Combine immutable processed exclusions with the legacy bottom strip once."""
         if self._mask_shape is not None:
@@ -114,19 +121,21 @@ class SLAM:
         self._mask_shape, self._extraction_mask = tuple(shape), mask
         return mask
 
-    def projection_matches(self, frame, pose, points, indices, diagnostics=None, trace=None, recovery_reference=None):
+    def projection_matches(self, frame, pose, points, indices, diagnostics=None, trace=None, recovery_reference=None,
+                           candidate_validation=False):
         """Extend proposals using positive-depth map projections, one match per point."""
         used_points, used_indices = set(points), set(indices)
         if recovery_reference is None:
             candidates = [p for p in self.map.points if p not in used_points and p.frames
-                          and frame.id - p.frames[-1].id <= 30]
+                          and frame.id - p.frames[-1].id <= 30
+                          and ((p.state == 'candidate') if candidate_validation else self.pose_landmark(p))]
             descriptors = None
         else:
             # Only a geometrically checked recovery seed may search old points.
             # Restrict this pass to that view's live landmarks, using descriptors
             # from the same old view rather than an unrelated last observation.
             descriptors = {p: recovery_reference.des[i] for i, p in enumerate(recovery_reference.pts)
-                           if p is not None and not p.deleted and p not in used_points}
+                           if self.pose_landmark(p, recovery=True) and p not in used_points}
             candidates = list(descriptors)
         if diagnostics is not None:
             diagnostics.update(candidates=len(candidates), positive_depth=0, in_image=0,
@@ -181,7 +190,7 @@ class SLAM:
         for reference in self.keyframes.candidates(frame, self.reference):
             evidence['scanned_keyframes'] += 1
             live = np.array([i for i, point in enumerate(reference.pts)
-                             if point is not None and not point.deleted], dtype=int)
+                             if self.pose_landmark(point, recovery=True)], dtype=int)
             if len(live) < 30:
                 evidence['candidates'].append({'frame_id': reference.id, 'mapped_matches': 0})
                 continue
@@ -238,7 +247,41 @@ class SLAM:
             return pose, [points[n] for n in rows], [indices[n] for n in rows], stages, samples
         return None
 
-    def add_points(self, current, previous, i, j, image):
+    def validate_candidates(self, current, previous, i, j, diagnostics=None):
+        """Observe candidates only after the camera pose has been committed.
+
+        Propagated descriptors and bounded-recency projections propose matches;
+        the fixed accepted T_cw must support each with positive depth and <=3px
+        error. These observations never enter this frame's pose fit/inlier count.
+        """
+        points, indices, used = [], [], set()
+        for a, b in zip(i, j):
+            point = previous.pts[b]
+            if (point is not None and not point.deleted and point.state == 'candidate'
+                    and point not in used and current.pts[a] is None):
+                points.append(point)
+                indices.append(int(a))
+                used.add(point)
+        # Reserve every committed observation before looking for extra matches.
+        committed = [(p, n) for n, p in enumerate(current.pts) if p is not None]
+        combined_points = [p for p, _ in committed] + points
+        combined_indices = [n for _, n in committed] + indices
+        combined_points, combined_indices = self.projection_matches(
+            current, current.pose, combined_points, combined_indices, candidate_validation=True)
+        points, indices = combined_points[len(committed):], combined_indices[len(committed):]
+        accepted = 0
+        if points:
+            pixels, _, visible = project(current.k, current.pose, [p.point for p in points])
+            valid = visible & (np.linalg.norm(pixels - current._kps[indices], axis=1) <= 3.)
+            for point, index, good in zip(points, indices, valid):
+                if good:
+                    point.add_observation(current, index)
+                    accepted += 1
+        if diagnostics is not None:
+            diagnostics.update(proposals=len(points), accepted=accepted, rejected=len(points) - accepted,
+                               pose_source='committed pose; candidates excluded from estimation')
+
+    def add_points(self, current, previous, i, j, image, bootstrap=False):
         free = np.array([current.pts[a] is None and previous.pts[b] is None for a, b in zip(i, j)], dtype=bool)
         i, j = i[free], j[free]
         xyz, good = triangulate_valid(previous.pose, current.pose, previous.kps[j], current.kps[i], self.k)
@@ -248,7 +291,7 @@ class SLAM:
                 u, v = np.rint(current._kps[a]).astype(int)
                 if not (0 <= u < current.w and 0 <= v < current.h):
                     continue
-                point = Point(self.map, location, image[v, u, ::-1])
+                point = Point(self.map, location, image[v, u, ::-1], born_frame_id=current.id, bootstrap=bootstrap)
                 point.add_observation(previous, b)
                 point.add_observation(current, a)
                 count += 1
@@ -359,16 +402,23 @@ class SLAM:
                     # against this map rather than accumulating unit translations.
                     self.map.add_frame(previous)
                     self.map.add_frame(frame)
-                    result.added_points = self.add_points(frame, previous, i[valid], j[valid], image)
+                    result.added_points = self.add_points(frame, previous, i[valid], j[valid], image, bootstrap=True)
                     result.inliers = int(np.count_nonzero(valid))
                     result.status = 'initialized'
                     self.reference = frame
                 else:
                     points, indices = [], []
                     for a, b in zip(i, j):
-                        if previous.pts[b] is not None:
+                        if self.pose_landmark(previous.pts[b]):
                             points.append(previous.pts[b])
                             indices.append(int(a))
+                    if evidence is not None:
+                        evidence['stages']['landmark_selection'] = {
+                            'policy': ('bootstrap' if len(self.map.frames) == 2 else 'active_only')
+                                      if self.map.landmark_maturity else 'legacy',
+                            'pose_inputs': len(points),
+                            'candidate_inputs': sum(p.state == 'candidate' for p in points)
+                                               if self.map.landmark_maturity else None}
                     try:
                         # A provisional pose may guide map search; it is never
                         # committed until the expanded matches pass full coverage.
@@ -426,6 +476,11 @@ class SLAM:
                     for n in selected:
                         points[n].add_observation(frame, indices[n])
                     result.inliers = len(selected)
+                    if self.map.landmark_maturity:
+                        stage_start = time.perf_counter()
+                        self.validate_candidates(frame, previous, i, j, observe('candidate_validation'))
+                        if evidence is not None:
+                            evidence['timing_seconds']['candidate_validation'] = time.perf_counter() - stage_start
                     # Adjacent dashcam frames often have too little parallax to
                     # replenish landmarks. Reuse an older accepted view with a
                     # larger time baseline, then apply the same geometric gates.
@@ -466,6 +521,8 @@ class SLAM:
             if not self.map.frames and self.reference is not None and frame.id - self.reference.id > 60:
                 self.reference = frame if len(frame.des) >= 30 else None
         result.landmarks = len(self.map.points)
+        if self.map.landmark_maturity:
+            result.landmark_quality = self.map.maturity_summary()
         result.processing_seconds = time.perf_counter() - start
         return frame, result
 
@@ -489,6 +546,8 @@ def parser():
                      help='Opt in to block-Huber refinement; Jacobian checks are always active')
     cli.add_argument('--recovery', action=argparse.BooleanOptionalAction, default=True,
                      help='Recover failed tracking against a bounded archive of older views')
+    cli.add_argument('--landmark-maturity', action=argparse.BooleanOptionalAction, default=False,
+                     help='Opt in to candidate validation and mature-only tracking, recovery and BA')
     cli.add_argument('--mask-bottom', type=float, default=0.0, help='Exclude this image-height fraction (0 <= fraction < 1)')
     cli.add_argument('--feature-mask', type=Path, help='Source-size grayscale PNG: 0 excludes, 255 allows features')
     cli.add_argument('--seed', type=int, default=0)
@@ -575,7 +634,8 @@ def run(args):
                 maps = cv2.initUndistortRectifyMap(k, distortion, None, k, (w, h), cv2.CV_32FC1) if np.any(distortion) else None
                 feature_mask, mask_metadata = prepare_feature_mask(args.feature_mask, (source_w, source_h), (w, h), maps)
                 tracker = SLAM(k, args.features, args.mask_bottom, args.condition_pnp, args.spatial_mapping,
-                               args.robust_pnp, args.recovery, feature_mask=feature_mask)
+                               args.robust_pnp, args.recovery, feature_mask=feature_mask,
+                               landmark_maturity=args.landmark_maturity)
                 effective_mask = tracker.extraction_mask((h, w))
                 mask_metadata.update(bottom_fraction=args.mask_bottom,
                     excluded_fraction=float(np.mean(effective_mask == 0)) if effective_mask is not None else 0.0,
@@ -631,7 +691,8 @@ def run(args):
                'recovered_frames': sum(r.recovered_from is not None for r in results),
                'states': dict(Counter(r.status for r in results)), 'elapsed_seconds': elapsed,
                'frames': [asdict(r) for r in results], 'poses': poses,
-               'landmarks': len(tracker.map.points) if tracker else 0}
+               'landmarks': len(tracker.map.points) if tracker else 0,
+               'landmark_quality': tracker.map.maturity_summary() if tracker and tracker.map.landmark_maturity else None}
     if args.report:
         with args.video.open('rb') as handle:
             summary['video_sha256'] = hashlib.file_digest(handle, 'sha256').hexdigest()
