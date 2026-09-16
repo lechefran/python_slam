@@ -85,6 +85,7 @@ Run `.venv/bin/python slam.py --help` for the complete interface. The installed 
 | `--calibration FILE` | Validated pinhole calibration input |
 | `--features N` | ORB feature cap (default 2000) |
 | `--condition-pnp` / `--no-condition-pnp` | Centered pose fitting with bounded consensus refits is enabled by default; disable for the legacy reference |
+| `--spatial-mapping` / `--no-spatial-mapping` | Replenish sparse image cells from a longer accepted-camera baseline; enabled by default |
 | `--mask-bottom FRACTION` | Optional fixed exclusion mask for hood/dashboard; default 0 |
 | `--seed N`, `--threads N` | OpenCV random seed and worker count; defaults 0 and 1 |
 | `--report FILE` | JSON environment/configuration, input hashes, frame outcomes, BA results and accepted `T_cw` poses |
@@ -113,7 +114,7 @@ See [tracking investigation](docs/tracking-diagnostics.md) for reproduction, evi
 
 PnP refinement now validates its initial and refined hypotheses and can try one VVS fallback when LM fails or worsens the candidate cost. See [pose-refinement behavior and evidence](docs/pose-refinement.md); coverage and residual acceptance thresholds remain unchanged.
 
-[Numerical conditioning](docs/numerical-conditioning.md) documents default centered fitting, seed recovery and consensus refits. The requested full dashcam replay retains all 1,180 baseline accepted frame IDs and adds 505, reaching 1,685 poses. This measures coverage, with real-road accuracy still unqualified.
+[Numerical conditioning](docs/numerical-conditioning.md) documents centered fitting, seed recovery and consensus refits. [Spatial support](docs/spatial-support.md) adds bounded landmark replenishment and concentration diagnostics. Together they retain every baseline accepted frame and reach 1,796 poses on the requested 1,800-frame dashcam replay, with no tracking loss after initialization. Real-road accuracy remains unqualified.
 
 ## Linux container and CI
 

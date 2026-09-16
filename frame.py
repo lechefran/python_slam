@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 from scipy.spatial import cKDTree
 
-from geometry import ConditionedPoints, add_one, condition_points, denormalize, normalize, pose_rt, valid_pose
+from geometry import ConditionedPoints, add_one, condition_points, denormalize, normalize, pose_rt, spatial_support, valid_pose
 
 
 class TrackingError(RuntimeError):
@@ -134,6 +134,7 @@ def _pose_candidate(frame, xyz, pixels, rotation, translation, max_error, requir
                            if len(selected) else None,
         'all_residual_px': residual_summary(errors), 'inlier_residual_px': residual_summary(errors[selected]),
         'clipped_cost_px2': float(score.sum())}
+    metrics['spatial_support'] = spatial_support(pixels[selected], frame.w, frame.h)
     return {'pose': pose, 'projected': projected, 'rows': selected, 'metrics': metrics}
 
 

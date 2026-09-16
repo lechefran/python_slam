@@ -74,7 +74,7 @@ The full run completed with **1,180 accepted poses**, **616 lost frames**, and *
 
 Full-run wall time was **233.99 seconds**, versus 178.30 seconds in the earlier run. The workload now includes more accepted poses/BA solves and diagnostic capture, and these are uncontrolled single runs; the result is not a speed improvement. Calibration remains approximate and real-road accuracy remains unqualified.
 
-Local evidence: `output/refinement-full-report.json`, `output/refinement-full-frames/`, and `output/refinement-comparison.json`. Reproduce using the direct CLI command from the [diagnostic guide](tracking-diagnostics.md), changing `--max-frames` to `1800` and choosing fresh output paths.
+Local evidence: `output/refinement-full-report.json`, `output/refinement-full-frames/`, and `output/refinement-comparison.json`. Reproduce using the direct CLI command from the [diagnostic guide](tracking-diagnostics.md), adding `--no-condition-pnp --no-spatial-mapping`, changing `--max-frames` to `1800` and choosing fresh output paths.
 
 All **26 regression tests** pass in the clean macOS environment; dependency consistency and diff checks pass. The rebuilt installed command was also run from `/private/tmp` on 25 synthetic frames with diagnostics enabled, exiting 0 with 23 accepted poses and the new refinement evidence present. Linux execution remains unverified.
 

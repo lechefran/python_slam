@@ -63,6 +63,42 @@ def condition_points(points):
     return ConditionedPoints(local, centre, scale)
 
 
+def spatial_support(pixels, width, height):
+    """Describe image support of (N,2) pixels without changing acceptance gates.
+
+    A bounding box can be large because of a few isolated points. A 4x4 count
+    grid, central-90% spans and the smaller covariance axis expose concentration
+    and thin/diagonal bands. Empty sky/road cells are not assumed observable.
+    """
+    pixels = np.asarray(pixels, dtype=np.float64).reshape(-1, 2)
+    if width <= 0 or height <= 0:
+        raise ValueError('Spatial support requires positive image dimensions')
+    normalized = pixels / [width, height]
+    inside = np.isfinite(normalized).all(axis=1) & (normalized >= 0).all(axis=1) & (normalized < 1).all(axis=1)
+    points = normalized[inside]
+    counts = np.zeros(16, dtype=int)
+    central_span = np.zeros(2)
+    minor_std = 0.
+    if len(points):
+        cells = np.floor(points * 4).astype(int)
+        counts = np.bincount(cells[:, 1] * 4 + cells[:, 0], minlength=16)
+        central_span = np.percentile(points, 95, axis=0) - np.percentile(points, 5, axis=0)
+        centered = points - points.mean(axis=0)
+        covariance = centered.T @ centered / len(points)
+        minor_std = float(np.sqrt(max(0., np.linalg.eigvalsh(covariance)[0])))
+    weights = counts / len(points) if len(points) else np.zeros(16)
+    # Inverse concentration equals the occupied-cell count for uniform support,
+    # and tends toward one when nearly every observation lies in a single cell.
+    return {'input_count': len(pixels), 'in_image_count': len(points),
+            'outside_or_nonfinite_count': int((~inside).sum()),
+            'grid_shape': [4, 4], 'grid_counts': counts.reshape(4, 4).tolist(),
+            'occupied_cells': int(np.count_nonzero(counts)),
+            'effective_cells': float(1. / np.dot(weights, weights)) if len(points) else 0.,
+            'largest_cell_fraction': float(weights.max()),
+            'central_90_span_fraction': central_span.tolist(),
+            'minor_axis_std_fraction': minor_std}
+
+
 def pose_rt(rotation, translation):
     """Build a float64 (4,4) rigid transform from R (3,3) and t (3,)."""
     pose = np.eye(4)

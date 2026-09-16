@@ -46,6 +46,17 @@ The first centered experiment regressed to 954 poses. The correction addresses s
 
 **Centering is now the default.** The full requested dashcam replay reaches 1,685 accepted poses, retains **every** baseline accepted frame ID, adds 505, and extends the last accepted frame from 1,198 to 1,709. There are 111 lost frames; real-road accuracy and Linux execution remain unqualified. `--no-condition-pnp` retains the previous solver path for comparisons. See the linked report for fixed-input regressions, diagnostic fields, validation and remaining limitations.
 
+## Spatial support update
+
+[Implementation and evidence](docs/spatial-support.md) add grid concentration, central-90% spans and minor-axis spread to diagnostics. The default mapper now supplements its ordinary 0.15-second triangulation partner with at most one accepted view at least 0.45 seconds older, filling only cells with fewer than four landmarks under the existing depth, parallax and reprojection gates.
+
+- [x] Measure clustered support beyond bounding-box extrema; compare distributions on common accepted frame IDs.
+- [x] Add bounded longer-baseline replenishment, without increasing the feature budget or changing pose acceptance thresholds.
+- [x] Preserve all 1,685 centered-baseline accepted frame IDs and add 111: the full requested replay reaches 1,796 poses and tracks through frame 1,799 without loss after initialization.
+- [x] Verify native far-point reconstruction, zero-baseline rejection, empty-feature handling, per-cell limits and observation/pose integrity. All 59 tests pass; the installed command is verified outside the checkout. Retire the feature-selection experiments that reduced coverage.
+- [ ] Qualify stationary-scene support and held-out trajectory accuracy. The distribution improvement does not remove vehicle/hood contamination or replace camera calibration.
+- [ ] Profile the additional matching/triangulation on sustained sequences and verify native Linux execution.
+
 ## Purpose and scope
 
 Improve this small Python monocular SLAM application in four connected areas: camera positioning, feature/landmark and graph-edge calculations, 2D mapping, and 3D mapping. Correctness, measured accuracy, usable operation, and sustained performance take precedence over adding algorithms.

@@ -81,11 +81,12 @@ def test_insufficient_map_support_preserves_failure_evidence(scene):
         'finite_count': 2, 'invalid_count': 2, 'median': 1.5, 'p95': 1.95, 'max': 2.0}
 
 
-@pytest.mark.parametrize('condition', [False, True])
-def test_benchmark_preserves_tracking_and_writes_replayable_evidence(tmp_path, condition):
+@pytest.mark.parametrize('condition, spatial', [(False, False), (True, False), (True, True)])
+def test_benchmark_preserves_tracking_and_writes_replayable_evidence(tmp_path, condition, spatial):
     video = generate(tmp_path / 'demo.avi', 25)
     baseline = tmp_path / 'baseline.json'
     mode = ['--condition-pnp'] if condition else ['--no-condition-pnp']
+    mode += ['--spatial-mapping'] if spatial else ['--no-spatial-mapping']
     plain = subprocess.run([sys.executable, str(ROOT / 'slam.py'), str(video), '--headless',
         '--focal', '400', '--max-frames', '25', '--report', str(baseline), *mode],
         capture_output=True, text=True, timeout=60, cwd=ROOT)
@@ -97,6 +98,7 @@ def test_benchmark_preserves_tracking_and_writes_replayable_evidence(tmp_path, c
     instrumented = subprocess.run(command, capture_output=True, text=True, timeout=60, cwd=ROOT)
     assert instrumented.returncode == 0, instrumented.stdout + instrumented.stderr
     report = json.loads((output / 'report.json').read_text())
+    assert report['configuration']['spatial_mapping'] == spatial
     summary = json.loads((output / 'summary.json').read_text())
     assert summary['complete_window'] and summary['focus_frames'] == 15
     assert summary['baseline_comparison']['identical_frame_outcomes']

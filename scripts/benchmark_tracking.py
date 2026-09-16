@@ -7,6 +7,7 @@ import csv
 import hashlib
 import json
 from pathlib import Path
+from statistics import median
 import sys
 
 from slam import main as slam_main
@@ -14,6 +15,18 @@ from tracking_diagnostics import write_json
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def summarize_support(measurements):
+    """Summarize distribution on a stated frame population, not accuracy."""
+    measurements = [item for item in measurements if item]
+    result = {'measured_frames': len(measurements)}
+    if measurements:
+        for key in ('effective_cells', 'largest_cell_fraction', 'minor_axis_std_fraction'):
+            result['median_' + key] = median(item[key] for item in measurements)
+        result['median_central90_span_x'] = median(item['central_90_span_fraction'][0] for item in measurements)
+        result['median_central90_span_y'] = median(item['central_90_span_fraction'][1] for item in measurements)
+    return result
 
 
 def summarize(report, start, end):
@@ -45,6 +58,11 @@ def summarize(report, start, end):
                                          if row['status'] == 'tracking'), None),
             'rejection_gates': dict(gates), 'reasons': dict(Counter(row['reason'] for row in losses)),
             'refinement_methods': dict(methods), 'refinement_fallback_reasons': dict(fallbacks),
+            'feature_support_all_focus_frames': summarize_support(
+                row['diagnostics']['stages'].get('extraction', {}).get('spatial_support') for row in rows),
+            'inlier_support_tracked_focus_frames': summarize_support(
+                row['diagnostics']['stages'].get('final_pnp', {}).get('spatial_support')
+                for row in rows if row['status'] == 'tracking'),
             'video_sha256': report['video_sha256'], 'calibration_status': report['camera']['calibration_status'],
             'calibration_sha256': report.get('calibration_sha256'),
             'accuracy_status': 'unqualified: no independent ground truth',
@@ -60,6 +78,8 @@ def compare_baseline(report, baseline):
         and all(report['configuration'].get(key) == baseline['configuration'].get(key) for key in config_keys))
     same_solver = (report['configuration'].get('condition_pnp', False)
                    == baseline['configuration'].get('condition_pnp', False))
+    same_mapping = (report['configuration'].get('spatial_mapping', False)
+                    == baseline['configuration'].get('spatial_mapping', False))
     fields = ('timestamp', 'status', 'reason', 'features', 'matches', 'inliers', 'added_points', 'landmarks')
     previous = {row['frame_id']: row for row in baseline['frames']}
     differences = [{'frame_id': row['frame_id'],
@@ -76,8 +96,21 @@ def compare_baseline(report, baseline):
                 'retains_all_baseline_frames': before <= after,
                 'newly_lost_frame_ids': sorted(before - after),
                 'newly_accepted_frame_ids': sorted(after - before)}
+    spatial_before, spatial_after = [], []
+    common_frames = before & after
+    for row in report['frames']:
+        if row['frame_id'] not in common_frames:
+            continue
+        current_support = (row.get('diagnostics') or {}).get('stages', {}).get('final_pnp', {}).get('spatial_support')
+        baseline_support = (previous[row['frame_id']].get('diagnostics') or {}).get('stages', {}).get('final_pnp', {}).get('spatial_support')
+        if current_support and baseline_support:
+            spatial_before.append(baseline_support)
+            spatial_after.append(current_support)
     return {'compatible_inputs': compatible, 'same_solver_configuration': same_solver,
+            'same_mapping_configuration': same_mapping,
             'coverage_comparison': coverage, 'compared_frames': len(report['frames']),
+            'spatial_support_common_accepted_frames': {'baseline': summarize_support(spatial_before),
+                                                       'current': summarize_support(spatial_after)},
             'identical_frame_outcomes': compatible and not differences, 'differences': differences,
             'baseline_environment': baseline['environment'],
             'note': 'Compares listed per-frame outcomes; excludes timing and final optimized poses.'}
@@ -87,7 +120,8 @@ def write_table(path, report, start, end):
     fields = ['frame', 'status', 'reason', 'reference', 'reference_age', 'features', 'matches',
               'seed_inputs', 'seed_ransac', 'seed_refined', 'projected_in_image', 'projection_added',
               'final_inputs', 'final_ransac', 'final_refined', 'span_x', 'span_y',
-              'inlier_median_px', 'inlier_p95_px', 'failure_stage']
+              'inlier_median_px', 'inlier_p95_px', 'failure_stage', 'effective_cells',
+              'largest_cell_fraction', 'central90_span_x', 'central90_span_y', 'minor_axis_std']
     with path.open('w', newline='') as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
@@ -99,12 +133,16 @@ def write_table(path, report, start, end):
             seed, search, final = (stages.get(key, {}) for key in ('provisional_pnp', 'projection_search', 'final_pnp'))
             span = final.get('span_fraction', [None, None])
             residual = final.get('inlier_residual_px', {})
+            spatial = final.get('spatial_support', {})
             writer.writerow(dict(zip(fields, [row['frame_id'], row['status'], row['reason'],
                 evidence['reference_frame_id'], evidence['reference_age_frames'], row['features'], row['matches'],
                 seed.get('input_count'), seed.get('ransac_inliers'), seed.get('refined_inliers'),
                 search.get('in_image'), search.get('added_matches'), final.get('input_count'),
                 final.get('ransac_inliers'), final.get('refined_inliers'), *span,
-                residual.get('median'), residual.get('p95'), evidence.get('failure_stage')])) )
+                residual.get('median'), residual.get('p95'), evidence.get('failure_stage'),
+                spatial.get('effective_cells'), spatial.get('largest_cell_fraction'),
+                *spatial.get('central_90_span_fraction', [None, None]),
+                spatial.get('minor_axis_std_fraction')])) )
 
 
 def main(argv=None):
@@ -116,6 +154,8 @@ def main(argv=None):
     cli.add_argument('--every', type=int, default=10)
     cli.add_argument('--calibration', type=Path)
     cli.add_argument('--focal', type=float, default=525)
+    cli.add_argument('--spatial-mapping', action=argparse.BooleanOptionalAction, default=True,
+                     help='Replenish sparse image cells from a longer triangulation baseline')
     cli.add_argument('--condition-pnp', action=argparse.BooleanOptionalAction, default=True,
                      help='Centre/scale pose fitting (default); disable for the legacy reference')
     cli.add_argument('--baseline', type=Path, help='Optional earlier SLAM report for prefix outcome comparison')
@@ -138,6 +178,7 @@ def main(argv=None):
     if args.calibration:
         command.extend(['--calibration', str(args.calibration)])
     command.append('--condition-pnp' if args.condition_pnp else '--no-condition-pnp')
+    command.append('--spatial-mapping' if args.spatial_mapping else '--no-spatial-mapping')
     sources = [*ROOT.glob('*.py'), Path(__file__), ROOT / 'pyproject.toml']
     write_json(args.output / 'manifest.json', {'schema_version': 1, 'argv': command,
         'source_sha256': {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()

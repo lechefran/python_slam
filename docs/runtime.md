@@ -1,8 +1,10 @@
 # Runtime repair and platform validation
 
-These are the initial runtime-repair results. The subsequent [pose-refinement correction](pose-refinement.md) records the current 26-test validation and full-video comparison (1,180 accepted poses); sustained tracking loss and Linux execution remain unresolved.
+These are the initial runtime-repair results. The subsequent [pose-refinement correction](pose-refinement.md) records that stage's 26-test validation and full-video comparison (1,180 accepted poses); sustained tracking loss and Linux execution remain unresolved.
 
 The later [numerical-conditioning work](numerical-conditioning.md) enables centered fitting with validated consensus refits by default. Its full dashcam replay retains all 1,180 baseline accepted frame IDs and adds 505. Current validation and remaining platform/accuracy limits are recorded in that report; the runtime measurements below remain historical.
+
+The [spatial-support follow-up](spatial-support.md) extends the default full replay to 1,796 poses with no loss after initialization. It retains every accepted frame from the centered baseline; distribution and coverage remain distinct from accuracy.
 
 ## Supported installation target
 

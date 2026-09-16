@@ -86,8 +86,17 @@ accepted camera: the final coverage gate may still reject that entire estimate.
         method = refinement.get('selected') or refinement.get('inspected', 'legacy LM')
         label(canvas, f'{metrics["status"]}: {metrics["gate"]}; candidate={method}', 2)
         fraction = metrics.get('span_fraction')
-        label(canvas, f'Span x/y: {fraction[0]:.3f}/{fraction[1]:.3f}; green=inlier red=rejected'
+        support = metrics.get('spatial_support')
+        spatial_label = (f'; cells {support["occupied_cells"]}/16; peak {support["largest_cell_fraction"]:.0%}'
+                         if support else '; green=inlier red=rejected')
+        label(canvas, f'Span x/y: {fraction[0]:.3f}/{fraction[1]:.3f}' + spatial_label
               if fraction else 'Green: refined inlier; red: rejected/unresolved input', 3)
+        if support:
+            for division in range(1, 4):
+                cv2.line(canvas, (width * division // 4, 104),
+                         (width * division // 4, height + 103), (70, 70, 70), 1)
+                cv2.line(canvas, (0, 104 + height * division // 4),
+                         (width - 1, 104 + height * division // 4), (70, 70, 70), 1)
         kept = set(sample.get('refined_rows', []))
         for row, pixel in enumerate(sample.get('pixels', [])):
             dot(canvas, pixel, (0, 255, 0) if row in kept else (0, 0, 255), 3)

@@ -2,14 +2,16 @@
 
 ## Status and use
 
+The subsequent [spatial-support change](spatial-support.md) adds default landmark replenishment and extends the full replay to 1,796 poses. The measurements below isolate the preceding conditioning correction; use `--no-spatial-mapping` to reproduce its 1,685-pose baseline.
+
 **Centering is enabled by default**, with bounded consensus refitting and recovery from an unusable RANSAC seed. On the requested 1,800-frame `GRMN2734.MP4` replay, this retains **all 1,180 frame IDs accepted by the preceding baseline**, adds **505**, and reaches **1,685 accepted poses**. This qualifies coverage on this clip and configuration; it does not establish real-road trajectory accuracy.
 
 ```sh
 .venv-portability/bin/python slam.py sample_videos/GRMN2734.MP4 \
-  --headless --max-frames 1800 --report output/centred-run.json
+  --headless --no-spatial-mapping --max-frames 1800 --report output/centred-run.json
 
 .venv-portability/bin/python -m scripts.benchmark_tracking output/centred-benchmark \
-  --focus-start 850 --focus-end 1799 --every 100 \
+  --focus-start 850 --focus-end 1799 --every 100 --no-spatial-mapping \
   --baseline output/conditioning-default-2026-09-15/report.json
 ```
 
@@ -107,6 +109,14 @@ The new run's first loss is frame 990; tracking still ends before the video fini
 Ignored local evidence: baseline `output/conditioning-default-2026-09-15/`; experimental replay `output/centering-consensus-experiment/`; production replay `output/centering-qualified-2026-09-15/`; fixed-input investigation and prototype scripts `output/centering-investigation/`. Each replay records source hashes, input identity, settings and per-frame results. Diagnostic capture and overlapping validation affect timing; no speed improvement is claimed.
 
 Other full-video probes failed to retain baseline coverage: always comparing an SQPnP alternative (179 poses), SQPnP recovery alone (958), AP3P hypothesis generation (2), VVS as primary refiner (930), and exact binary scaling (944). They informed the investigation and are not production modes. The retained method addresses the stale consensus directly while preserving the existing hypothesis generator and thresholds.
+
+## Final verification
+
+The production replay in `output/centering-qualified-2026-09-15/` matches every experimental per-frame outcome/count and every final optimized pose exactly. All 1,683 `tracking` frames report centered coordinates; the other two accepted poses are the initialization pair. Its final-fit selections are 1,418 second-round consensus fits, 256 first-round fits and 9 initial LM fits. The separate `coverage-comparison.json` verifies retention of all 1,180 baseline accepted frame IDs.
+
+Production wall time was 367.03 seconds, versus 244.74 seconds for the previous default replay. Both are uncontrolled runs with different successful mapping workloads and overlapping checks. More tracking work and bounded extra refinements have a real runtime cost; this is not a speed improvement.
+
+All **50 tests** pass in the local macOS environment; `pip check` and `git diff --check` pass. The rebuilt installed command ran from `/private/tmp` with no conditioning flag on 25 synthetic frames, returned 24 poses and 3,058 landmarks, and reported centered fitting. Native Linux execution remains unverified. The benchmark comparison helper gained explicit frame-set comparison after the production replay began; `coverage-comparison.json` was generated afterward from its unchanged report and the prior baseline.
 
 ## Remaining limitations
 

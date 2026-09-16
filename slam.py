@@ -18,7 +18,7 @@ import numpy as np
 
 from dmap import Map
 from frame import Frame, TrackingError, estimate_pose, match_features, recover_relative
-from geometry import project, triangulate, triangulate_valid
+from geometry import project, spatial_support, triangulate, triangulate_valid
 from point import Point
 
 
@@ -69,13 +69,14 @@ class FrameResult:
 
 
 class SLAM:
-    def __init__(self, k, features=2000, mask_bottom=0.0, condition_pnp=True):
+    def __init__(self, k, features=2000, mask_bottom=0.0, condition_pnp=True, spatial_mapping=True):
         self.map = Map()
         self.k = k
         self.detector = cv2.ORB_create(nfeatures=features)
         self.reference = None
         self.mask_bottom = mask_bottom
         self.condition_pnp = condition_pnp
+        self.spatial_mapping = spatial_mapping
 
     def projection_matches(self, frame, pose, points, indices, diagnostics=None, trace=None):
         """Extend proposals using positive-depth map projections, one match per point."""
@@ -132,6 +133,49 @@ class SLAM:
                 count += 1
         return count
 
+    def replenish_spatial_points(self, current, previous, image, diagnostics=None):
+        """Fill sparse 4x4 image cells using one older accepted triangulation view.
+
+        The ordinary mapping pass uses at least 0.15 seconds of separation.
+        Here 0.45 seconds offers more parallax for distant features; time alone
+        never authorizes a landmark. Retain the same two-view depth, 1-degree
+        parallax and 3-pixel reprojection gates, with at most four points per cell.
+        """
+        older = [frame for frame in self.map.frames[:-1]
+                 if current.timestamp - frame.timestamp >= .45 and frame is not previous]
+        if diagnostics is not None:
+            diagnostics.update(reference_frame_id=None, candidate_matches=0,
+                               geometry_pass=0, added_points=0, status='no_older_reference')
+        if not older:
+            return 0
+        cells = np.floor(current._kps / [current.w / 4, current.h / 4]).astype(int)
+        cell_ids = cells[:, 1] * 4 + cells[:, 0]
+        occupied = np.array([point is not None for point in current.pts], dtype=bool)
+        counts = np.bincount(cell_ids[occupied], minlength=16)
+        if not np.any((counts[cell_ids] < 4) & ~occupied):
+            if diagnostics is not None:
+                diagnostics['status'] = 'no_under_supported_features'
+            return 0
+        reference = older[-1]
+        ti, tj = match_features(current, reference)
+        free = np.array([current.pts[a] is None and reference.pts[b] is None
+                         and counts[cell_ids[a]] < 4 for a, b in zip(ti, tj)], dtype=bool)
+        ti, tj = ti[free], tj[free]
+        _, good = triangulate_valid(reference.pose, current.pose, reference.kps[tj], current.kps[ti], self.k)
+        # Descriptor matches arrive in evidence order. Reserve only geometrically
+        # valid proposals until each sparse cell reaches its small support target.
+        chosen = []
+        for row, valid in enumerate(good):
+            cell = cell_ids[ti[row]]
+            if valid and counts[cell] < 4:
+                chosen.append(row)
+                counts[cell] += 1
+        added = self.add_points(current, reference, ti[chosen], tj[chosen], image) if chosen else 0
+        if diagnostics is not None:
+            diagnostics.update(reference_frame_id=reference.id, candidate_matches=len(ti),
+                               geometry_pass=int(good.sum()), added_points=added, status='evaluated')
+        return added
+
     def process(self, image, frame_id, timestamp, diagnostics=False, capture_trace=False):
         """Produce a frame result; failed visual estimates never mutate the map."""
         start = time.perf_counter()
@@ -150,6 +194,7 @@ class SLAM:
         result = FrameResult(frame_id, timestamp, 'initializing', features=len(frame.des), diagnostics=evidence)
         if evidence is not None:
             evidence['timing_seconds']['extraction'] = time.perf_counter() - start
+            evidence['stages']['extraction'] = {'spatial_support': spatial_support(frame._kps, frame.w, frame.h)}
         if self.last_trace is not None:
             self.last_trace['feature_pixels'] = frame._kps.tolist()
         stage = 'reference'
@@ -242,6 +287,9 @@ class SLAM:
                     stage_start = time.perf_counter()
                     ti, tj = match_features(frame, triangulation_frame)
                     result.added_points = self.add_points(frame, triangulation_frame, ti, tj, image)
+                    if self.spatial_mapping:
+                        result.added_points += self.replenish_spatial_points(
+                            frame, triangulation_frame, image, observe('spatial_replenishment'))
                     if evidence is not None:
                         evidence['stages']['triangulation'] = {'reference_frame_id': triangulation_frame.id,
                             'matches': len(ti), 'added_points': result.added_points}
@@ -281,6 +329,8 @@ def parser():
     cli.add_argument('--focal', type=float, default=os.getenv('F', '525'), help='Approximate focal length in source pixels')
     cli.add_argument('--calibration', type=Path, help='Pinhole JSON calibration at source resolution')
     cli.add_argument('--features', type=int, default=2000)
+    cli.add_argument('--spatial-mapping', action=argparse.BooleanOptionalAction, default=True,
+                     help='Replenish sparse image cells using a longer triangulation baseline')
     cli.add_argument('--condition-pnp', action=argparse.BooleanOptionalAction, default=True,
                      help='Centre/scale pose fitting with validated consensus refits (default: enabled)')
     cli.add_argument('--mask-bottom', type=float, default=0.0, help='Exclude this image-height fraction (0 <= fraction < 1)')
@@ -363,7 +413,7 @@ def run(args):
                             'timestamp_source': 'OpenCV CAP_PROP_POS_MSEC', 'scale': 'arbitrary'}
                 if calibration is None:
                     print('Approximate intrinsics: supply --calibration for camera-specific geometry; scale is arbitrary.', file=sys.stderr)
-                tracker = SLAM(k, args.features, args.mask_bottom, args.condition_pnp)
+                tracker = SLAM(k, args.features, args.mask_bottom, args.condition_pnp, args.spatial_mapping)
                 maps = cv2.initUndistortRectifyMap(k, distortion, None, k, (w, h), cv2.CV_32FC1) if np.any(distortion) else None
                 if not args.headless:
                     from display import Viewer
