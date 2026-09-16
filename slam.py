@@ -12,6 +12,7 @@ from pathlib import Path
 import platform
 import sys
 import time
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
@@ -20,6 +21,7 @@ from dmap import Map
 from frame import Frame, TrackingError, estimate_pose, match_features, recover_relative
 from geometry import project, spatial_support, triangulate, triangulate_valid
 from point import Point
+from recovery import RecoveryKeyframes
 
 
 def camera_parameters(width, height, focal=525.0, max_width=1024, calibration=None):
@@ -66,10 +68,12 @@ class FrameResult:
     processing_seconds: float = 0.0
     ba: dict | None = None
     diagnostics: dict | None = None
+    recovered_from: int | None = None
 
 
 class SLAM:
-    def __init__(self, k, features=2000, mask_bottom=0.0, condition_pnp=True, spatial_mapping=True, robust_pnp=False):
+    def __init__(self, k, features=2000, mask_bottom=0.0, condition_pnp=True, spatial_mapping=True, robust_pnp=False,
+                 recovery=True):
         self.map = Map()
         self.k = k
         self.detector = cv2.ORB_create(nfeatures=features)
@@ -78,12 +82,23 @@ class SLAM:
         self.condition_pnp = condition_pnp
         self.robust_pnp = robust_pnp
         self.spatial_mapping = spatial_mapping
+        self.recovery = recovery
+        self.keyframes = RecoveryKeyframes()
 
-    def projection_matches(self, frame, pose, points, indices, diagnostics=None, trace=None):
+    def projection_matches(self, frame, pose, points, indices, diagnostics=None, trace=None, recovery_reference=None):
         """Extend proposals using positive-depth map projections, one match per point."""
         used_points, used_indices = set(points), set(indices)
-        candidates = [p for p in self.map.points if p not in used_points and p.frames
-                      and frame.id - p.frames[-1].id <= 30]
+        if recovery_reference is None:
+            candidates = [p for p in self.map.points if p not in used_points and p.frames
+                          and frame.id - p.frames[-1].id <= 30]
+            descriptors = None
+        else:
+            # Only a geometrically checked recovery seed may search old points.
+            # Restrict this pass to that view's live landmarks, using descriptors
+            # from the same old view rather than an unrelated last observation.
+            descriptors = {p: recovery_reference.des[i] for i, p in enumerate(recovery_reference.pts)
+                           if p is not None and not p.deleted and p not in used_points}
+            candidates = list(descriptors)
         if diagnostics is not None:
             diagnostics.update(candidates=len(candidates), positive_depth=0, in_image=0,
                                with_nearby_features=0, with_available_features=0, added_matches=0)
@@ -101,7 +116,7 @@ class SLAM:
             if not valid:
                 continue
             nearby = frame.kd.query_ball_point(pixel, 5.0)
-            reference = point.frames[-1].des[point.idx[-1]]
+            reference = point.frames[-1].des[point.idx[-1]] if descriptors is None else descriptors[point]
             ranked = sorted((cv2.norm(reference, frame.des[i], cv2.NORM_HAMMING), i)
                             for i in nearby if i not in used_indices)
             if diagnostics is not None:
@@ -117,6 +132,82 @@ class SLAM:
                 if trace is not None:
                     trace['added_feature_indices'].append(int(index))
         return points, indices
+
+    def recover_pose(self, frame, diagnostics=None, trace=None):
+        """Try at most three old views; return a proposal without mutating the map.
+
+        Descriptor retrieval is only a shortlist. Pose fitting uses live world
+        XYZ, pixel measurements and the usual depth/residual/coverage/rank gates.
+        At least 30 original descriptor correspondences, and half the original
+        matched population, must survive the final fit. Projected additions
+        cannot manufacture that independent descriptor-support requirement.
+        """
+        evidence = diagnostics if diagnostics is not None else {}
+        evidence.update(status='failed', archive_size=len(self.keyframes.frames),
+                        scanned_keyframes=0, candidates=[], attempts=[], chosen_frame_id=None)
+        if len(frame.des) < 30:
+            evidence['status'] = 'insufficient_features'
+            return None
+        ranked = []
+        for reference in self.keyframes.candidates(frame, self.reference):
+            evidence['scanned_keyframes'] += 1
+            live = np.array([i for i, point in enumerate(reference.pts)
+                             if point is not None and not point.deleted], dtype=int)
+            if len(live) < 30:
+                evidence['candidates'].append({'frame_id': reference.id, 'mapped_matches': 0})
+                continue
+            # Match only surviving landmark descriptors, then explicitly remap
+            # train rows to the original feature slots; culling can leave holes.
+            i, matched = match_features(frame, SimpleNamespace(des=reference.des[live]))
+            j = live[matched]
+            points, indices, used = [], [], set()
+            for a, b in zip(i, j):
+                point = reference.pts[b]
+                if point is not None and not point.deleted and point not in used:
+                    used.add(point)
+                    points.append(point)
+                    indices.append(int(a))
+            evidence['candidates'].append({'frame_id': reference.id, 'mapped_matches': len(points)})
+            if len(points) >= 30:
+                ranked.append((reference, points, indices))
+        ranked.sort(key=lambda item: (-len(item[1]), -item[0].id))
+        for reference, original_points, original_indices in ranked[:3]:
+            attempt = {'frame_id': reference.id, 'age_frames': frame.id - reference.id,
+                       'age_seconds': frame.timestamp - reference.timestamp,
+                       'mapped_matches': len(original_points), 'status': 'rejected', 'stages': {}}
+            evidence['attempts'].append(attempt)
+            samples = {} if trace is not None else None
+            def observe(name):
+                return attempt['stages'].setdefault(name, {})
+            def snapshot(name):
+                return samples.setdefault(name, {}) if samples is not None else None
+            try:
+                pose, rows = estimate_pose(frame, original_points, original_indices, require_coverage=False,
+                    diagnostics=observe('provisional_pnp'), trace=snapshot('provisional_pnp'),
+                    condition=self.condition_pnp, robust=False)
+                points = [original_points[n] for n in rows]
+                indices = [original_indices[n] for n in rows]
+                points, indices = self.projection_matches(frame, pose, points, indices,
+                    observe('projection_search'), snapshot('projection_search'), recovery_reference=reference)
+                pose, rows = estimate_pose(frame, points, indices, diagnostics=observe('final_pnp'),
+                    trace=snapshot('final_pnp'), condition=self.condition_pnp, robust=self.robust_pnp)
+                originals = set(zip(original_points, original_indices))
+                retained = sum((points[n], indices[n]) in originals for n in rows)
+                attempt['original_inliers'] = retained
+                if retained < 30 or retained < .5 * len(original_points):
+                    raise TrackingError('insufficient original keyframe support for recovery')
+            except (TrackingError, cv2.error) as exc:
+                attempt['reason'] = str(exc)
+                if samples is not None:
+                    trace.setdefault('attempts', []).append(samples)
+                continue
+            attempt.update(status='accepted', final_inliers=len(rows))
+            evidence.update(status='recovered', chosen_frame_id=reference.id)
+            if trace is not None:
+                trace['selected'] = samples
+            stages = dict(attempt['stages'], reference_frame_id=reference.id)
+            return pose, [points[n] for n in rows], [indices[n] for n in rows], stages, samples
+        return None
 
     def add_points(self, current, previous, i, j, image):
         free = np.array([current.pts[a] is None and previous.pts[b] is None for a, b in zip(i, j)], dtype=bool)
@@ -251,31 +342,57 @@ class SLAM:
                         if previous.pts[b] is not None:
                             points.append(previous.pts[b])
                             indices.append(int(a))
-                    # A provisional pose may guide map search; it is never
-                    # committed until the expanded matches pass full coverage.
-                    stage = 'provisional_pnp'
-                    stage_start = time.perf_counter()
-                    # Keep the search seed on the established solver path;
-                    # robust updates use the complete post-search population.
-                    pose, selected = estimate_pose(frame, points, indices, require_coverage=False,
-                                                   diagnostics=observe(stage), trace=snapshot(stage),
-                                                   condition=self.condition_pnp, robust=False)
-                    if evidence is not None:
-                        evidence['timing_seconds'][stage] = time.perf_counter() - stage_start
-                    points = [points[n] for n in selected]
-                    indices = [indices[n] for n in selected]
-                    stage = 'projection_search'
-                    stage_start = time.perf_counter()
-                    points, indices = self.projection_matches(frame, pose, points, indices, observe(stage), snapshot(stage))
-                    if evidence is not None:
-                        evidence['timing_seconds'][stage] = time.perf_counter() - stage_start
-                    stage = 'final_pnp'
-                    stage_start = time.perf_counter()
-                    frame.pose, selected = estimate_pose(frame, points, indices,
-                                                         diagnostics=observe(stage), trace=snapshot(stage),
-                                                         condition=self.condition_pnp, robust=self.robust_pnp)
-                    if evidence is not None:
-                        evidence['timing_seconds'][stage] = time.perf_counter() - stage_start
+                    try:
+                        # A provisional pose may guide map search; it is never
+                        # committed until the expanded matches pass full coverage.
+                        stage = 'provisional_pnp'
+                        stage_start = time.perf_counter()
+                        # Keep the search seed on the established solver path;
+                        # robust updates use the complete post-search population.
+                        pose, selected = estimate_pose(frame, points, indices, require_coverage=False,
+                                                       diagnostics=observe(stage), trace=snapshot(stage),
+                                                       condition=self.condition_pnp, robust=False)
+                        if evidence is not None:
+                            evidence['timing_seconds'][stage] = time.perf_counter() - stage_start
+                        points = [points[n] for n in selected]
+                        indices = [indices[n] for n in selected]
+                        stage = 'projection_search'
+                        stage_start = time.perf_counter()
+                        points, indices = self.projection_matches(frame, pose, points, indices, observe(stage), snapshot(stage))
+                        if evidence is not None:
+                            evidence['timing_seconds'][stage] = time.perf_counter() - stage_start
+                        stage = 'final_pnp'
+                        stage_start = time.perf_counter()
+                        frame.pose, selected = estimate_pose(frame, points, indices,
+                                                             diagnostics=observe(stage), trace=snapshot(stage),
+                                                             condition=self.condition_pnp, robust=self.robust_pnp)
+                        if evidence is not None:
+                            evidence['timing_seconds'][stage] = time.perf_counter() - stage_start
+                    except TrackingError as exc:
+                        if not self.recovery:
+                            raise
+                        failed_stage = stage
+                        if evidence is not None:
+                            evidence['timing_seconds'][stage] = time.perf_counter() - stage_start
+                            evidence['normal_tracking_failure'] = {'stage': stage, 'reason': str(exc),
+                                'stages': dict(evidence['stages'])}
+                        stage = 'recovery'
+                        stage_start = time.perf_counter()
+                        recovered = self.recover_pose(frame, observe(stage), snapshot(stage))
+                        if evidence is not None:
+                            evidence['timing_seconds'][stage] = time.perf_counter() - stage_start
+                        if recovered is None:
+                            stage = failed_stage
+                            raise
+                        frame.pose, points, indices, recovered_stages, recovered_trace = recovered
+                        selected = np.arange(len(points))
+                        result.recovered_from = recovered_stages.pop('reference_frame_id')
+                        if evidence is not None:
+                            evidence['stages'].update(recovered_stages)
+                        if self.last_trace is not None:
+                            self.last_trace['normal_tracking'] = {
+                                key: value for key, value in self.last_trace.items() if key != 'recovery'}
+                            self.last_trace.update(recovered_trace)
                     # Commit only after the final map-based pose passes validation;
                     # newly associated points already contributed to this estimate.
                     self.map.add_frame(frame)
@@ -285,18 +402,19 @@ class SLAM:
                     # Adjacent dashcam frames often have too little parallax to
                     # replenish landmarks. Reuse an older accepted view with a
                     # larger time baseline, then apply the same geometric gates.
-                    older = [f for f in self.map.frames[:-1] if timestamp - f.timestamp >= 0.15]
-                    triangulation_frame = older[-1] if older else self.map.frames[0]
-                    stage_start = time.perf_counter()
-                    ti, tj = match_features(frame, triangulation_frame)
-                    result.added_points = self.add_points(frame, triangulation_frame, ti, tj, image)
-                    if self.spatial_mapping:
-                        result.added_points += self.replenish_spatial_points(
-                            frame, triangulation_frame, image, observe('spatial_replenishment'))
-                    if evidence is not None:
-                        evidence['stages']['triangulation'] = {'reference_frame_id': triangulation_frame.id,
-                            'matches': len(ti), 'added_points': result.added_points}
-                        evidence['timing_seconds']['triangulation'] = time.perf_counter() - stage_start
+                    if result.recovered_from is None:
+                        older = [f for f in self.map.frames[:-1] if timestamp - f.timestamp >= 0.15]
+                        triangulation_frame = older[-1] if older else self.map.frames[0]
+                        stage_start = time.perf_counter()
+                        ti, tj = match_features(frame, triangulation_frame)
+                        result.added_points = self.add_points(frame, triangulation_frame, ti, tj, image)
+                        if self.spatial_mapping:
+                            result.added_points += self.replenish_spatial_points(
+                                frame, triangulation_frame, image, observe('spatial_replenishment'))
+                        if evidence is not None:
+                            evidence['stages']['triangulation'] = {'reference_frame_id': triangulation_frame.id,
+                                'matches': len(ti), 'added_points': result.added_points}
+                            evidence['timing_seconds']['triangulation'] = time.perf_counter() - stage_start
                     self.reference = frame
                     result.status = 'tracking'
                 if self.map.frames and len(self.map.frames) % 5 == 0:
@@ -305,13 +423,17 @@ class SLAM:
                     self.map.cull(frame.id)
                     if evidence is not None:
                         evidence['timing_seconds']['optimization_and_culling'] = time.perf_counter() - stage_start
+            if self.recovery and result.status in ('initialized', 'tracking'):
+                if not self.keyframes.frames:
+                    self.keyframes.add(self.map.frames[0])
+                self.keyframes.add(frame)
         except TrackingError as exc:
             result.status = 'lost' if self.map.frames else 'initializing'
             result.reason = str(exc)
             if evidence is not None:
                 evidence['failure_stage'] = stage
                 if stage in ('provisional_pnp', 'final_pnp'):
-                    evidence['timing_seconds'][stage] = time.perf_counter() - stage_start
+                    evidence['timing_seconds'].setdefault(stage, time.perf_counter() - stage_start)
             # Refresh an unusable initializer, but never reset an established map's
             # scale/origin after loss. Subsequent frames retry the last valid view.
             if not self.map.frames and self.reference is not None and frame.id - self.reference.id > 60:
@@ -338,6 +460,8 @@ def parser():
                      help='Centre/scale pose fitting with validated consensus refits (default: enabled)')
     cli.add_argument('--robust-pnp', action=argparse.BooleanOptionalAction, default=False,
                      help='Opt in to block-Huber refinement; Jacobian checks are always active')
+    cli.add_argument('--recovery', action=argparse.BooleanOptionalAction, default=True,
+                     help='Recover failed tracking against a bounded archive of older views')
     cli.add_argument('--mask-bottom', type=float, default=0.0, help='Exclude this image-height fraction (0 <= fraction < 1)')
     cli.add_argument('--seed', type=int, default=0)
     cli.add_argument('--threads', type=int, default=1, help='OpenCV worker threads')
@@ -418,7 +542,7 @@ def run(args):
                             'timestamp_source': 'OpenCV CAP_PROP_POS_MSEC', 'scale': 'arbitrary'}
                 if calibration is None:
                     print('Approximate intrinsics: supply --calibration for camera-specific geometry; scale is arbitrary.', file=sys.stderr)
-                tracker = SLAM(k, args.features, args.mask_bottom, args.condition_pnp, args.spatial_mapping, args.robust_pnp)
+                tracker = SLAM(k, args.features, args.mask_bottom, args.condition_pnp, args.spatial_mapping, args.robust_pnp, args.recovery)
                 maps = cv2.initUndistortRectifyMap(k, distortion, None, k, (w, h), cv2.CV_32FC1) if np.any(distortion) else None
                 if not args.headless:
                     from display import Viewer
@@ -436,8 +560,9 @@ def run(args):
                 diagnostic_start = time.perf_counter()
                 diagnostic_writer.write(image, result, tracker.last_trace)
                 result.diagnostics['timing_seconds']['artifact_write'] = time.perf_counter() - diagnostic_start
-            if len(results) == 1 or len(results) % 30 == 0:
-                print(f'frame={frame_id} state={result.status} inliers={result.inliers} points={result.landmarks}', flush=True)
+            if len(results) == 1 or len(results) % 30 == 0 or result.recovered_from is not None:
+                source = '' if result.recovered_from is None else f' recovered_from={result.recovered_from}'
+                print(f'frame={frame_id} state={result.status} inliers={result.inliers} points={result.landmarks}{source}', flush=True)
             if viewer and not viewer.update(image, frame, tracker.map, result.status):
                 outcome = 'closed'
                 break
@@ -467,6 +592,7 @@ def run(args):
                'configuration': {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
                'decoded_frames': len(results), 'accepted_poses': len(poses),
                'pose_coverage': len(poses) / len(results) if results else 0.0,
+               'recovered_frames': sum(r.recovered_from is not None for r in results),
                'states': dict(Counter(r.status for r in results)), 'elapsed_seconds': elapsed,
                'frames': [asdict(r) for r in results], 'poses': poses,
                'landmarks': len(tracker.map.points) if tracker else 0}

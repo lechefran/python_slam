@@ -1,7 +1,7 @@
 # Spatial support and landmark replenishment
 
 The subsequent [robust PnP change](robust-pose.md) adds residual weighting and
-Jacobian checks. Use `--no-robust-pnp` when reproducing this earlier benchmark.
+Jacobian checks. Use `--no-robust-pnp --no-recovery` when reproducing this earlier benchmark.
 
 ## Result and scope
 

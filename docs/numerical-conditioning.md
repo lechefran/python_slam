@@ -2,7 +2,8 @@
 
 The subsequent [robust PnP change](robust-pose.md) adds residual weighting and
 Jacobian conditioning checks. Add `--no-robust-pnp` to the commands below to
-isolate this earlier solver baseline.
+isolate this earlier solver baseline. Also use `--no-recovery` to exclude the
+subsequent older-keyframe fallback when reproducing earlier losses.
 
 ## Status and use
 

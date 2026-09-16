@@ -64,10 +64,12 @@ accepted camera: the final coverage gate may still reject that entire estimate.
         if np.isfinite([u, v]).all() and 0 <= u < width and 0 <= v < height:
             cv2.circle(canvas, (int(round(u)), int(round(v)) + 104), radius, color, 1, cv2.LINE_AA)
 
-    first = panel(f'Frame {result.frame_id}: {result.status} | descriptor filtering')
+    matching_title = 'descriptor filtering' if result.recovered_from is None else 'normal descriptor filtering'
+    first = panel(f'Frame {result.frame_id}: {result.status} | {matching_title}')
     label(first, f'{result.features} features; {result.matches} unique matches to reference')
     label(first, 'Gray: ORB features; yellow: surviving matches', 2)
-    label(first, f'Reference frame: {result.diagnostics["reference_frame_id"]}', 3)
+    label(first, f'Normal reference: {result.diagnostics["reference_frame_id"]}' if result.recovered_from is not None
+          else f'Reference frame: {result.diagnostics["reference_frame_id"]}', 3)
     for pixel in trace.get('feature_pixels', []):
         dot(first, pixel, (130, 130, 130), 1)
     for pixel in trace.get('matches', {}).get('current_pixels', []):
@@ -106,7 +108,9 @@ accepted camera: the final coverage gate may still reject that entire estimate.
             cv2.rectangle(canvas, (lo[0], lo[1] + 104), (hi[0], hi[1] + 104), (255, 255, 255), 1)
         return canvas
 
-    panels.append(pnp_panel('provisional_pnp', 'Seed pose: previous-frame landmark matches'))
+    seed_title = ('Seed pose: previous-frame landmark matches' if result.recovered_from is None
+                  else f'Recovery seed: keyframe {result.recovered_from} landmark matches')
+    panels.append(pnp_panel('provisional_pnp', seed_title))
     third = panel('Map projection search: provisional pose, 5-pixel radius')
     metrics = stages.get('projection_search')
     if metrics is None:
@@ -119,7 +123,9 @@ accepted camera: the final coverage gate may still reject that entire estimate.
         for index in trace.get('projection_search', {}).get('added_feature_indices', []):
             dot(third, trace['feature_pixels'][index], (255, 255, 0), 4)
     panels.append(third)
-    panels.append(pnp_panel('final_pnp', 'Final pose: geometric inliers and image-coverage gate'))
+    final_title = ('Final pose: geometric inliers and image-coverage gate' if result.recovered_from is None
+                   else f'Final pose: recovered from keyframe {result.recovered_from}')
+    panels.append(pnp_panel('final_pnp', final_title))
     return np.vstack((np.hstack(panels[:2]), np.hstack(panels[2:])))
 
 
@@ -141,7 +147,8 @@ class DiagnosticWriter:
         self.previous_status = result.status
         if not self.captures(result.frame_id):
             return
-        if (result.frame_id - self.start) % self.every and result.frame_id != self.end and not transition:
+        if ((result.frame_id - self.start) % self.every and result.frame_id != self.end
+                and not transition and result.recovered_from is None):
             return
         stem = f'frame-{result.frame_id:06d}'
         png = self.directory / f'{stem}.png'

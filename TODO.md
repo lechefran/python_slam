@@ -19,7 +19,7 @@ The next diagnostic pass is implemented: [reproduction and findings](docs/tracki
 - [x] Trace sustained loss: frame 941 loses spatial support during final PnP refinement; after frame 940 remains the last accepted reference, all projection candidates expire at frame 971.
 - [x] Add an independent thin-band synthetic regression and verify diagnostics preserve synthetic native-optimized poses exactly.
 - [ ] Improve spatially distributed, static-scene pose support and investigate refinement sensitivity; measure results without relaxing safeguards solely to increase pose counts.
-- [ ] Add geometrically validated recovery that can search useful accepted keyframes/landmarks beyond the normal 30-frame projection-recency window.
+- [x] Add bounded, geometrically validated recovery against older accepted keyframes and their live landmarks beyond the normal projection-recency window; see the [recovery report](docs/keyframe-recovery.md).
 
 This is partial progress on CAM-08 and QA-02. Upstream calibration/dynamic-object causes, recovery behavior, held-out accuracy and the full QA protocol remain unresolved.
 
@@ -36,7 +36,7 @@ The [frame-941 correction](docs/pose-refinement.md) validates returned PnP poses
 - [ ] Extend conditioning qualification to calibrated, held-out sequences and native Linux execution; the supplied development clip does not establish trajectory accuracy.
 - [ ] Evaluate spatial/static-scene weighting and robust refinement losses on labelled and held-out data; the candidate cost cap is not an optimizer loss or a covariance estimate.
 
-The 30-frame projection expiry and broader recovery work remain unchanged. Full details and qualification limits are in the linked correction report.
+Normal projection search retains the 30-frame expiry; the subsequent older-keyframe fallback is documented in the [recovery report](docs/keyframe-recovery.md). Full details and qualification limits for the earlier refinement correction are in its linked report.
 
 ## Numerical conditioning update
 
@@ -68,9 +68,21 @@ pose refinement and checks on the weighted and unweighted pixel Jacobian.
 - [x] Check derivatives against independent finite differences, origin/scale invariance, biased-observation accuracy against synthetic truth, planar/collinear/near-collinear support, and failed-proposal isolation.
 - [x] Benchmark the full requested video and keep weighted updates opt-in: the final robust mode retains 1,792 poses versus the 1,796-pose baseline. Conditioning checks remain active by default.
 - [x] Verify the default on all 1,800 frames: with conditioning checks active, every baseline outcome/count and final optimized pose is reproduced exactly. All 80 tests pass.
-- [ ] Recover the four regressed frames (1,719, 1,760, 1,763 and 1,765) under unchanged geometric gates before considering robust updates as the default. Preserve all baseline frame identities; do not tune solely to increase this clip's counts.
+- [ ] Restore every default-baseline frame under unchanged geometric gates before considering robust updates as the default. The earlier robust-only losses were 1,719, 1,760, 1,763 and 1,765; with older-keyframe recovery they are 1,719, 1,762 and 1,763. Preserve all baseline frame identities; do not tune solely to increase this clip's counts.
 - [ ] Qualify residual scale/noise models, static-scene weighting and pose uncertainty on calibrated held-out sequences; current weights and condition policies are not covariance or calibrated confidence.
 - [ ] Extend conditioning analysis to the anchored bundle-adjustment graph; existing per-edge Huber kernels do not establish full graph observability.
+
+## Older-keyframe recovery update
+
+- [x] Archive at most 64 accepted representatives with temporal spacing; retain live pose/observation references through BA and culling.
+- [x] Retrieve live landmark descriptors and try at most three geometric candidates after normal tracking fails. Require final geometric/conditioning gates plus at least 30 original inliers and 50% original support.
+- [x] Commit validated observations once, preserve map origin/scale, resume normal tracking from the recovered camera, and defer new landmarks on the recovery frame.
+- [x] Record failed normal tracking, recovery candidates/ages/reasons, chosen keyframe and actual committed-pose diagnostics. Expose `--no-recovery` for comparisons.
+- [x] Pass 95 regression tests, rebuild the wheel, check installed headless CLI operation in both recovery modes, and verify dependency consistency on macOS arm64.
+- [x] Qualify native synthetic recovery beyond 30 frames and a controlled real-pixel revisit: after 45 blank inputs, recover using a 135-frame-old keyframe and track 30/30 revisit inputs versus 7/30 without recovery.
+- [x] Replay all 1,800 dashcam frames: default mode preserves all 1,796 baseline poses and per-frame outcomes exactly. Robust mode recovers frame 1,760 from keyframe 1,740 but still loses three frames, including newly lost frame 1,762; retain robust weighting as opt-in.
+- [ ] Evaluate held-out natural revisits, repeated-place negatives and dynamic-object contamination; this bounded archive is not loop closure or a global place-recognition system.
+- [ ] Profile prolonged textured loss and larger histories before replacing the bounded linear descriptor scan with indexed retrieval.
 
 ## Purpose and scope
 

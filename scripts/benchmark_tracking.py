@@ -51,6 +51,20 @@ def summarize_pose_quality(rows):
     return result
 
 
+def summarize_recovery(rows):
+    """Separate recovery activity from normal tracking and count actual commits."""
+    attempts = [row['diagnostics']['stages'].get('recovery') for row in rows]
+    attempts = [item for item in attempts if item]
+    accepted = [candidate for item in attempts for candidate in item['attempts']
+                if candidate['status'] == 'accepted']
+    return {'attempted_frames': len(attempts),
+            'pose_candidates_tried': sum(len(item['attempts']) for item in attempts),
+            'recovered_frame_ids': [row['frame_id'] for row in rows if row.get('recovered_from') is not None],
+            'recovery_reference_ids': [item['frame_id'] for item in accepted],
+            'max_reference_age_frames': max((item['age_frames'] for item in accepted), default=None),
+            'statuses': dict(Counter(item['status'] for item in attempts))}
+
+
 def summarize(report, start, end):
     """Keep failed estimates visible; accepted-pose counts alone hide rejection."""
     rows = [row for row in report['frames'] if start <= row['frame_id'] <= end]
@@ -81,6 +95,7 @@ def summarize(report, start, end):
             'rejection_gates': dict(gates), 'reasons': dict(Counter(row['reason'] for row in losses)),
             'refinement_methods': dict(methods), 'refinement_fallback_reasons': dict(fallbacks),
             'pose_quality_focus_frames': summarize_pose_quality(rows),
+            'recovery_focus_frames': summarize_recovery(rows),
             'feature_support_all_focus_frames': summarize_support(
                 row['diagnostics']['stages'].get('extraction', {}).get('spatial_support') for row in rows),
             'inlier_support_tracked_focus_frames': summarize_support(
@@ -103,6 +118,8 @@ def compare_baseline(report, baseline):
                    == baseline['configuration'].get('condition_pnp', False)
                    and report['configuration'].get('robust_pnp', False)
                    == baseline['configuration'].get('robust_pnp', False))
+    same_recovery = (report['configuration'].get('recovery', False)
+                     == baseline['configuration'].get('recovery', False))
     same_mapping = (report['configuration'].get('spatial_mapping', False)
                     == baseline['configuration'].get('spatial_mapping', False))
     fields = ('timestamp', 'status', 'reason', 'features', 'matches', 'inliers', 'added_points', 'landmarks')
@@ -132,7 +149,7 @@ def compare_baseline(report, baseline):
             spatial_before.append(baseline_support)
             spatial_after.append(current_support)
     return {'compatible_inputs': compatible, 'same_solver_configuration': same_solver,
-            'same_mapping_configuration': same_mapping,
+            'same_mapping_configuration': same_mapping, 'same_recovery_configuration': same_recovery,
             'coverage_comparison': coverage, 'compared_frames': len(report['frames']),
             'spatial_support_common_accepted_frames': {'baseline': summarize_support(spatial_before),
                                                        'current': summarize_support(spatial_after)},
@@ -185,6 +202,7 @@ def main(argv=None):
                      help='Centre/scale pose fitting (default); disable for the legacy reference')
     cli.add_argument('--robust-pnp', action=argparse.BooleanOptionalAction, default=False,
                      help='Opt in to block-Huber refinement for comparison with the baseline')
+    cli.add_argument('--recovery', action=argparse.BooleanOptionalAction, default=True)
     cli.add_argument('--baseline', type=Path, help='Optional earlier SLAM report for prefix outcome comparison')
     args = cli.parse_args(argv)
     if args.focus_start < 0 or args.focus_end < args.focus_start or args.every < 1:
@@ -207,6 +225,7 @@ def main(argv=None):
     command.append('--condition-pnp' if args.condition_pnp else '--no-condition-pnp')
     command.append('--spatial-mapping' if args.spatial_mapping else '--no-spatial-mapping')
     command.append('--robust-pnp' if args.robust_pnp else '--no-robust-pnp')
+    command.append('--recovery' if args.recovery else '--no-recovery')
     sources = [*ROOT.glob('*.py'), Path(__file__), ROOT / 'pyproject.toml']
     write_json(args.output / 'manifest.json', {'schema_version': 1, 'argv': command,
         'source_sha256': {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()

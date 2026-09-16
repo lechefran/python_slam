@@ -1,5 +1,9 @@
 # Robust residual weighting and pose conditioning
 
+The subsequent [older-keyframe fallback](keyframe-recovery.md) adds recovery
+after normal tracking fails. Add `--no-recovery` to reproduce the pre-recovery
+measurements in this document.
+
 ## Scope
 
 With `--robust-pnp`, PnP performs bounded block-Huber refinement after the existing

@@ -87,6 +87,7 @@ Run `.venv/bin/python slam.py --help` for the complete interface. The installed 
 | `--condition-pnp` / `--no-condition-pnp` | Centered pose fitting with bounded consensus refits is enabled by default; disable for the legacy reference |
 | `--spatial-mapping` / `--no-spatial-mapping` | Replenish sparse image cells from a longer accepted-camera baseline; enabled by default |
 | `--robust-pnp` / `--no-robust-pnp` | Opt-in block-Huber pose refinement; conditioning checks are always active. Default off pending dashcam coverage qualification |
+| `--recovery` / `--no-recovery` | Recover failed tracking against a bounded archive of older accepted views; enabled by default |
 | `--mask-bottom FRACTION` | Optional fixed exclusion mask for hood/dashboard; default 0 |
 | `--seed N`, `--threads N` | OpenCV random seed and worker count; defaults 0 and 1 |
 | `--report FILE` | JSON environment/configuration, input hashes, frame outcomes, BA results and accepted `T_cw` poses |
@@ -97,7 +98,7 @@ Run `.venv/bin/python slam.py --help` for the complete interface. The installed 
 
 `F` and `SEEK` provide legacy defaults overridden by explicit CLI options. `REVERSE` is ignored with a notice: translation sign comes from two-view cheirality.
 
-Frames are reported as `initializing`, `initialized`, `tracking`, or `lost`. Only accepted poses are inserted into the map; the initialization reference is also retained once the initial pair succeeds. After loss the tracker retries the last accepted view; there is no place-recognition recovery or silent restart into a different scale. Inspect `states` and `pose_coverage` in reports, not only exit status.
+Frames are reported as `initializing`, `initialized`, `tracking`, or `lost`. Only accepted poses are inserted into the map; the initialization reference is also retained once the initial pair succeeds. Failed normal tracking can recover against a bounded archive of older views, with `recovered_from` identifying the selected keyframe. Failed recovery retains the last valid reference and map scale. Inspect `states`, `pose_coverage` and `recovered_frames` in reports, not only exit status.
 
 Exit codes: **0** means processing completed/was closed and a map was initialized (tracking gaps may exist); **1** means processing failed; **2** means invalid arguments or no map initialized; **130** means interrupted. GUI hold/pause time is included in total wall time; per-frame processing excludes decoding, resizing/rectification, and rendering. Do not label either number alone as real-time SLAM throughput.
 
@@ -117,7 +118,9 @@ PnP refinement now validates its initial and refined hypotheses and can try one 
 
 [Numerical conditioning](docs/numerical-conditioning.md) documents centered fitting, seed recovery and consensus refits. [Spatial support](docs/spatial-support.md) adds bounded landmark replenishment and concentration diagnostics. Together they retain every baseline accepted frame and reach 1,796 poses on the requested 1,800-frame dashcam replay, with no tracking loss after initialization. Real-road accuracy remains unqualified.
 
-[Robust pose fitting](docs/robust-pose.md) adds residual weighting during optimization and checks the weighted/unweighted pose Jacobian. Conditioning checks are always active; `--robust-pnp` opts into weighted updates. Its full dashcam replay retains 1,792 of the baseline's 1,796 poses, so weighted updates remain off by default while that regression is unresolved.
+[Robust pose fitting](docs/robust-pose.md) adds residual weighting during optimization and checks the weighted/unweighted pose Jacobian. Conditioning checks are always active; `--robust-pnp` opts into weighted updates. Before older-keyframe recovery, its full dashcam replay retained 1,792 of the baseline's 1,796 poses. With recovery it accepts 1,793, but newly loses frame 1,762 relative to that earlier robust run. Weighted updates remain off by default while these regressions are unresolved.
+
+[Older-keyframe recovery](docs/keyframe-recovery.md) adds a bounded fallback after normal tracking fails. The default full dashcam replay preserves all 1,796 baseline poses exactly. A controlled revisit using the supplied dashcam pixels recovers across a 135-frame keyframe gap and tracks all 30 revisit frames, versus seven without recovery. This is separate from natural-route accuracy qualification.
 
 ## Linux container and CI
 
