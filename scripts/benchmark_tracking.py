@@ -212,6 +212,8 @@ def main(argv=None):
                      help='Opt in to block-Huber refinement for comparison with the baseline')
     cli.add_argument('--recovery', action=argparse.BooleanOptionalAction, default=True)
     cli.add_argument('--landmark-maturity', action=argparse.BooleanOptionalAction, default=False)
+    cli.add_argument('--observation-history', action=argparse.BooleanOptionalAction, default=True)
+    cli.add_argument('--quality-report', action='store_true', help='Include detailed bounded landmark histories')
     cli.add_argument('--baseline', type=Path, help='Optional earlier SLAM report for prefix outcome comparison')
     args = cli.parse_args(argv)
     if args.focus_start < 0 or args.focus_end < args.focus_start or args.every < 1:
@@ -238,6 +240,9 @@ def main(argv=None):
     command.append('--robust-pnp' if args.robust_pnp else '--no-robust-pnp')
     command.append('--recovery' if args.recovery else '--no-recovery')
     command.append('--landmark-maturity' if args.landmark_maturity else '--no-landmark-maturity')
+    command.append('--observation-history' if args.observation_history else '--no-observation-history')
+    if args.quality_report:
+        command.extend(['--quality-report', str(args.output / 'quality.json')])
     sources = [*ROOT.glob('*.py'), Path(__file__), ROOT / 'pyproject.toml']
     write_json(args.output / 'manifest.json', {'schema_version': 1, 'argv': command,
         'source_sha256': {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()

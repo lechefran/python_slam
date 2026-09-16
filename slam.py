@@ -23,6 +23,7 @@ from geometry import project, spatial_support, triangulate, triangulate_valid
 from point import Point
 from recovery import RecoveryKeyframes
 from feature_mask import prepare_feature_mask
+from observation_quality import write_quality_report
 
 
 def camera_parameters(width, height, focal=525.0, max_width=1024, calibration=None):
@@ -71,12 +72,13 @@ class FrameResult:
     diagnostics: dict | None = None
     recovered_from: int | None = None
     landmark_quality: dict | None = None
+    observation_quality: dict | None = None
 
 
 class SLAM:
     def __init__(self, k, features=2000, mask_bottom=0.0, condition_pnp=True, spatial_mapping=True, robust_pnp=False,
-                 recovery=True, feature_mask=None, landmark_maturity=False):
-        self.map = Map(landmark_maturity=landmark_maturity)
+                 recovery=True, feature_mask=None, landmark_maturity=False, observation_history=True):
+        self.map = Map(landmark_maturity=landmark_maturity, observation_history=observation_history)
         self.k = k
         self.detector = cv2.ORB_create(nfeatures=features)
         self.reference = None
@@ -122,7 +124,7 @@ class SLAM:
         return mask
 
     def projection_matches(self, frame, pose, points, indices, diagnostics=None, trace=None, recovery_reference=None,
-                           candidate_validation=False):
+                           candidate_validation=False, quality_attempts=None):
         """Extend proposals using positive-depth map projections, one match per point."""
         used_points, used_indices = set(points), set(indices)
         if recovery_reference is None:
@@ -153,6 +155,8 @@ class SLAM:
         for point, pixel, valid in zip(candidates, pixels, visible):
             if not valid:
                 continue
+            if quality_attempts is not None:
+                quality_attempts.setdefault(point, None)
             nearby = frame.kd.query_ball_point(pixel, 5.0)
             reference = point.frames[-1].des[point.idx[-1]] if descriptors is None else descriptors[point]
             ranked = sorted((cv2.norm(reference, frame.des[i], cv2.NORM_HAMMING), i)
@@ -164,6 +168,8 @@ class SLAM:
                 _, index = ranked[0]
                 points.append(point)
                 indices.append(index)
+                if quality_attempts is not None:
+                    quality_attempts[point] = int(index)
                 used_indices.add(index)
                 if diagnostics is not None:
                     diagnostics['added_matches'] += 1
@@ -171,7 +177,7 @@ class SLAM:
                     trace['added_feature_indices'].append(int(index))
         return points, indices
 
-    def recover_pose(self, frame, diagnostics=None, trace=None):
+    def recover_pose(self, frame, diagnostics=None, trace=None, quality_attempts=None):
         """Try at most three old views; return a proposal without mutating the map.
 
         Descriptor retrieval is only a shortlist. Pose fitting uses live world
@@ -210,6 +216,7 @@ class SLAM:
                 ranked.append((reference, points, indices))
         ranked.sort(key=lambda item: (-len(item[1]), -item[0].id))
         for reference, original_points, original_indices in ranked[:3]:
+            candidate_attempts = dict(zip(original_points, original_indices)) if quality_attempts is not None else None
             attempt = {'frame_id': reference.id, 'age_frames': frame.id - reference.id,
                        'age_seconds': frame.timestamp - reference.timestamp,
                        'mapped_matches': len(original_points), 'status': 'rejected', 'stages': {}}
@@ -226,7 +233,8 @@ class SLAM:
                 points = [original_points[n] for n in rows]
                 indices = [original_indices[n] for n in rows]
                 points, indices = self.projection_matches(frame, pose, points, indices,
-                    observe('projection_search'), snapshot('projection_search'), recovery_reference=reference)
+                    observe('projection_search'), snapshot('projection_search'), recovery_reference=reference,
+                    quality_attempts=candidate_attempts)
                 pose, rows = estimate_pose(frame, points, indices, diagnostics=observe('final_pnp'),
                     trace=snapshot('final_pnp'), condition=self.condition_pnp, robust=self.robust_pnp)
                 originals = set(zip(original_points, original_indices))
@@ -241,13 +249,18 @@ class SLAM:
                 continue
             attempt.update(status='accepted', final_inliers=len(rows))
             evidence.update(status='recovered', chosen_frame_id=reference.id)
+            if quality_attempts is not None:
+                # Only the winning recovery attempt has an accepted pose for
+                # interpreting misses; discarded candidates cannot penalize points.
+                quality_attempts.clear()
+                quality_attempts.update(candidate_attempts)
             if trace is not None:
                 trace['selected'] = samples
             stages = dict(attempt['stages'], reference_frame_id=reference.id)
             return pose, [points[n] for n in rows], [indices[n] for n in rows], stages, samples
         return None
 
-    def validate_candidates(self, current, previous, i, j, diagnostics=None):
+    def validate_candidates(self, current, previous, i, j, diagnostics=None, quality_attempts=None):
         """Observe candidates only after the camera pose has been committed.
 
         Propagated descriptors and bounded-recency projections propose matches;
@@ -262,12 +275,15 @@ class SLAM:
                 points.append(point)
                 indices.append(int(a))
                 used.add(point)
+                if quality_attempts is not None:
+                    quality_attempts[point] = int(a)
         # Reserve every committed observation before looking for extra matches.
         committed = [(p, n) for n, p in enumerate(current.pts) if p is not None]
         combined_points = [p for p, _ in committed] + points
         combined_indices = [n for _, n in committed] + indices
         combined_points, combined_indices = self.projection_matches(
-            current, current.pose, combined_points, combined_indices, candidate_validation=True)
+            current, current.pose, combined_points, combined_indices, candidate_validation=True,
+            quality_attempts=quality_attempts)
         points, indices = combined_points[len(committed):], combined_indices[len(committed):]
         accepted = 0
         if points:
@@ -280,6 +296,34 @@ class SLAM:
         if diagnostics is not None:
             diagnostics.update(proposals=len(points), accepted=accepted, rejected=len(points) - accepted,
                                pose_source='committed pose; candidates excluded from estimation')
+
+    def assess_searches(self, frame, attempts):
+        """Commit passive, deduplicated search evidence only for accepted cameras.
+
+        Reproject against final T_cw: a provisional search is not proof that a
+        landmark was visible. Out-of-image, masked or invalid final projections
+        are unassessed, not failed reobservations. Actual occlusion is unknown.
+        """
+        if not attempts:
+            return
+        points = list(attempts)
+        pixels, depths, visible = project(frame.k, frame.pose, [p.point for p in points])
+        actual = {p: i for i, p in enumerate(frame.pts) if p is not None}
+        mask = self.extraction_mask((frame.h, frame.w))
+        for point, pixel, depth, valid in zip(points, pixels, depths, visible):
+            index = actual.get(point, attempts[point])
+            residual = float(np.linalg.norm(pixel - frame._kps[index])) if valid and index is not None else None
+            inside = valid and 0 <= pixel[0] < frame.w and 0 <= pixel[1] < frame.h
+            if inside and mask is not None:
+                u, v = np.floor(pixel + .5).astype(int)
+                inside = u < frame.w and v < frame.h and mask[v, u] != 0
+            if point in actual:
+                outcome = 'accepted'
+            elif not inside:
+                outcome = 'unassessed'
+            else:
+                outcome = 'unmatched' if index is None else 'rejected'
+            point.record_quality(frame.id, frame.id, 'search', outcome, residual, depth, index)
 
     def add_points(self, current, previous, i, j, image, bootstrap=False):
         free = np.array([current.pts[a] is None and previous.pts[b] is None for a, b in zip(i, j)], dtype=bool)
@@ -412,6 +456,7 @@ class SLAM:
                         if self.pose_landmark(previous.pts[b]):
                             points.append(previous.pts[b])
                             indices.append(int(a))
+                    quality_attempts = dict(zip(points, indices)) if self.map.observation_history else None
                     if evidence is not None:
                         evidence['stages']['landmark_selection'] = {
                             'policy': ('bootstrap' if len(self.map.frames) == 2 else 'active_only')
@@ -435,7 +480,8 @@ class SLAM:
                         indices = [indices[n] for n in selected]
                         stage = 'projection_search'
                         stage_start = time.perf_counter()
-                        points, indices = self.projection_matches(frame, pose, points, indices, observe(stage), snapshot(stage))
+                        points, indices = self.projection_matches(frame, pose, points, indices, observe(stage), snapshot(stage),
+                                                                  quality_attempts=quality_attempts)
                         if evidence is not None:
                             evidence['timing_seconds'][stage] = time.perf_counter() - stage_start
                         stage = 'final_pnp'
@@ -455,7 +501,7 @@ class SLAM:
                                 'stages': dict(evidence['stages'])}
                         stage = 'recovery'
                         stage_start = time.perf_counter()
-                        recovered = self.recover_pose(frame, observe(stage), snapshot(stage))
+                        recovered = self.recover_pose(frame, observe(stage), snapshot(stage), quality_attempts=quality_attempts)
                         if evidence is not None:
                             evidence['timing_seconds'][stage] = time.perf_counter() - stage_start
                         if recovered is None:
@@ -478,9 +524,11 @@ class SLAM:
                     result.inliers = len(selected)
                     if self.map.landmark_maturity:
                         stage_start = time.perf_counter()
-                        self.validate_candidates(frame, previous, i, j, observe('candidate_validation'))
+                        self.validate_candidates(frame, previous, i, j, observe('candidate_validation'), quality_attempts)
                         if evidence is not None:
                             evidence['timing_seconds']['candidate_validation'] = time.perf_counter() - stage_start
+                    if quality_attempts is not None:
+                        self.assess_searches(frame, quality_attempts)
                     # Adjacent dashcam frames often have too little parallax to
                     # replenish landmarks. Reuse an older accepted view with a
                     # larger time baseline, then apply the same geometric gates.
@@ -523,6 +571,10 @@ class SLAM:
         result.landmarks = len(self.map.points)
         if self.map.landmark_maturity:
             result.landmark_quality = self.map.maturity_summary()
+        if self.map.observation_history:
+            if result.status == 'lost':
+                self.map.quality_events['tracking/lost_unassessed'] += 1
+            result.observation_quality = self.map.observation_summary()
         result.processing_seconds = time.perf_counter() - start
         return frame, result
 
@@ -548,6 +600,9 @@ def parser():
                      help='Recover failed tracking against a bounded archive of older views')
     cli.add_argument('--landmark-maturity', action=argparse.BooleanOptionalAction, default=False,
                      help='Opt in to candidate validation and mature-only tracking, recovery and BA')
+    cli.add_argument('--observation-history', action=argparse.BooleanOptionalAction, default=True,
+                     help='Record bounded passive landmark quality histories (default: enabled)')
+    cli.add_argument('--quality-report', type=Path, help='Detailed landmark history JSON, separate from the trajectory report')
     cli.add_argument('--mask-bottom', type=float, default=0.0, help='Exclude this image-height fraction (0 <= fraction < 1)')
     cli.add_argument('--feature-mask', type=Path, help='Source-size grayscale PNG: 0 excludes, 255 allows features')
     cli.add_argument('--seed', type=int, default=0)
@@ -579,11 +634,20 @@ def run(args):
     calibration = json.loads(args.calibration.read_text()) if args.calibration else None
     if calibration is not None and not isinstance(calibration, dict):
         raise ValueError('Calibration must be a JSON object')
-    if args.report:
-        args.report.parent.mkdir(parents=True, exist_ok=True)
-        inputs = {p.resolve() for p in (args.video, args.calibration, args.feature_mask) if p is not None}
-        if {args.report.resolve(), args.report.with_name(args.report.name + '.tmp').resolve()} & inputs:
+    if args.quality_report and not args.observation_history:
+        raise ValueError('--quality-report requires observation history')
+    inputs = {p.resolve() for p in (args.video, args.calibration, args.feature_mask) if p is not None}
+    outputs = set()
+    for output in (args.report, args.quality_report):
+        if output is None:
+            continue
+        paths = {output.resolve(), output.with_name(output.name + '.tmp').resolve()}
+        if paths & inputs:
             raise ValueError('Report must not overwrite video, calibration or feature mask')
+        if paths & outputs:
+            raise ValueError('Trajectory and quality reports must use distinct paths, including temporary files')
+        outputs.update(paths)
+        output.parent.mkdir(parents=True, exist_ok=True)
     cv2.setRNGSeed(args.seed)
     cv2.setNumThreads(args.threads)
     diagnostic_writer = None
@@ -635,7 +699,7 @@ def run(args):
                 feature_mask, mask_metadata = prepare_feature_mask(args.feature_mask, (source_w, source_h), (w, h), maps)
                 tracker = SLAM(k, args.features, args.mask_bottom, args.condition_pnp, args.spatial_mapping,
                                args.robust_pnp, args.recovery, feature_mask=feature_mask,
-                               landmark_maturity=args.landmark_maturity)
+                               landmark_maturity=args.landmark_maturity, observation_history=args.observation_history)
                 effective_mask = tracker.extraction_mask((h, w))
                 mask_metadata.update(bottom_fraction=args.mask_bottom,
                     excluded_fraction=float(np.mean(effective_mask == 0)) if effective_mask is not None else 0.0,
@@ -692,12 +756,24 @@ def run(args):
                'states': dict(Counter(r.status for r in results)), 'elapsed_seconds': elapsed,
                'frames': [asdict(r) for r in results], 'poses': poses,
                'landmarks': len(tracker.map.points) if tracker else 0,
-               'landmark_quality': tracker.map.maturity_summary() if tracker and tracker.map.landmark_maturity else None}
-    if args.report:
+               'landmark_quality': tracker.map.maturity_summary() if tracker and tracker.map.landmark_maturity else None,
+               'observation_quality': tracker.map.observation_summary() if tracker else None}
+    if args.report or args.quality_report:
         with args.video.open('rb') as handle:
             summary['video_sha256'] = hashlib.file_digest(handle, 'sha256').hexdigest()
         if args.calibration:
             summary['calibration_sha256'] = hashlib.sha256(args.calibration.read_bytes()).hexdigest()
+    if args.quality_report:
+        last_id = results[-1].frame_id if results else args.start_frame
+        quality = {'schema_version': 1, 'kind': 'landmark_observation_quality',
+                   'video_sha256': summary['video_sha256'], 'camera': metadata, 'feature_mask': mask_metadata,
+                   'configuration': summary['configuration'], 'environment': summary['environment'],
+                   'outcome': outcome, 'error': failure, 'last_processed_frame_id': last_id,
+                   'summary': summary['observation_quality'],
+                   'residual_units': 'processed rectified pixels', 'depth_units': 'arbitrary monocular map units'}
+        write_quality_report(args.quality_report, quality, tracker.map.points if tracker else [],
+                             tracker.map.retired_quality if tracker else [], last_id)
+    if args.report:
         temporary = args.report.with_name(args.report.name + '.tmp')
         temporary.write_text(json.dumps(summary, indent=2, allow_nan=False) + '\n')
         temporary.replace(args.report)

@@ -91,6 +91,8 @@ Run `.venv/bin/python slam.py --help` for the complete interface. The installed 
 | `--mask-bottom FRACTION` | Optional fixed exclusion mask for hood/dashboard; default 0 |
 | `--feature-mask FILE.png` | Source-resolution binary grayscale mask: black excludes feature centres, white allows them; combined with the bottom strip |
 | `--landmark-maturity` / `--no-landmark-maturity` | Opt-in candidate validation and active-only pose/recovery/BA support; default off pending coverage qualification |
+| `--observation-history` / `--no-observation-history` | Bounded passive landmark evidence; enabled by default |
+| `--quality-report FILE` | Detailed JSON with individual observation histories and a bounded retired-landmark sample |
 | `--seed N`, `--threads N` | OpenCV random seed and worker count; defaults 0 and 1 |
 | `--report FILE` | JSON environment/configuration, input hashes, frame outcomes, BA results and accepted `T_cw` poses |
 | `--diagnostics-dir DIR` | New directory for sampled tracking overlays and numeric evidence; use with `--report` |
@@ -118,6 +120,12 @@ diagnostics, and qualification limits. This option is off by default.
 The experimental dashcam run accepts only three poses, versus the unchanged
 1,796-pose default, because mature support loses image coverage at frame 7.
 Use the default policy for normal dashcam runs.
+
+[Observation quality histories](docs/observation-quality.md) record insertion
+residuals, assessed re-observation searches, later culling checks and retirement
+without changing tracking decisions. Aggregate counts appear in normal reports;
+`--quality-report output/quality.json` saves individual bounded histories. Lost
+frames and unsearched points are not counted as landmark matching failures.
 
 ### Configurable exclusion masks
 

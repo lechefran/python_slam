@@ -101,6 +101,8 @@ not add background map mutation during tracking loss.
   reason, selected frame IDs, parallax and maximum checked residual when valid.
   This is a current bounded assessment, not an unbounded residual history or
   successful-reobservation probability.
+  The subsequent [observation-history feature](observation-quality.md) separately
+  retains bounded residual/search/culling evidence without changing maturity rules.
 - The ORB overlay shows **green active landmarks** and **magenta candidates**
   in this mode. Cyan remains an unassociated ORB feature. O toggles all markers.
 - With maturity disabled, maturity classification is not evaluated and report

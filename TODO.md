@@ -110,6 +110,18 @@ Implementation and qualification: [exclusion masks](docs/exclusion-masks.md).
 
 See [landmark maturity](docs/landmark-maturity.md) for policy and evidence.
 
+## Observation quality history update
+
+- [x] Retain 16 recent events per landmark plus lifetime counters, with insertion residuals, assessed search results, later culling measurements and retirement reasons.
+- [x] Define a deduplicated re-observation denominator using actually searched support assessed against accepted cameras; exclude unsearched points and failed-pose hypotheses.
+- [x] Separate historical observation time from assessment time and keep BA rechecks distinct from original insertion residuals.
+- [x] Retain a bounded sample of 64 retired landmarks and aggregate lifetime event counts; stream detailed versioned quality JSON without building another whole-map tree.
+- [x] Expose aggregate quality in reports and a separate `--quality-report`; keep evidence passive and independent of experimental maturity gating.
+- [x] Pass 133 tests and installed CLI/export checks. Full history-on/off dashcam replays preserve all 1,796 baseline poses and per-frame outcomes exactly; audit every live exported landmark's bounded history.
+- [ ] Qualify quality-driven selection/culling on held-out data; operational search yield is not static-scene confidence, occlusion-aware visibility, or covariance.
+
+Implementation and qualification: [observation quality history](docs/observation-quality.md).
+
 ## Purpose and scope
 
 Improve this small Python monocular SLAM application in four connected areas: camera positioning, feature/landmark and graph-edge calculations, 2D mapping, and 3D mapping. Correctness, measured accuracy, usable operation, and sustained performance take precedence over adding algorithms.

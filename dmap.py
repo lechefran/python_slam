@@ -1,6 +1,7 @@
 """Sparse map and native g2opy bundle adjustment; no display imports."""
 
 from dataclasses import dataclass, asdict
+from collections import Counter, deque
 import time
 
 import g2opy as g2o
@@ -39,7 +40,7 @@ def camera_vertex(frame, identifier, fixed):
 
 
 class Map:
-    def __init__(self, landmark_maturity=False):
+    def __init__(self, landmark_maturity=False, observation_history=True):
         self.frames = []
         self.points = []
         self.max_point = 0
@@ -47,6 +48,19 @@ class Map:
         self.landmark_maturity = landmark_maturity
         self.landmark_counts = {'candidate': 0, 'active': 0, 'outlier': 0, 'retired': 0}
         self.maturity_events = {'promotions': 0, 'demotions': 0}
+        self.observation_history = observation_history
+        self.quality_events = Counter()
+        self.retired_quality = deque(maxlen=64)
+
+    def observation_summary(self):
+        if not self.observation_history:
+            return None
+        accepted = self.quality_events['search/accepted']
+        attempts = accepted + self.quality_events['search/rejected'] + self.quality_events['search/unmatched']
+        return {'events': dict(self.quality_events), 'assessed_searches': attempts,
+                'successful_reobservation_ratio': accepted / attempts if attempts else None,
+                'history_capacity_per_landmark': 16, 'retired_sample_capacity': 64,
+                'retained_retired_samples': len(self.retired_quality)}
 
     def maturity_summary(self):
         """Live candidate/active counts; outlier/retired counts are cumulative."""
@@ -90,12 +104,18 @@ class Map:
         # Batch projection by camera: residual semantics are identical, while
         # avoiding one NumPy matrix allocation for every historical observation.
         for frame, pairs in observations.items():
-            pixels, _, visible = project(frame.k, frame.pose, [p.point for p, _ in pairs])
+            pixels, depths, visible = project(frame.k, frame.pose, [p.point for p, _ in pairs])
             measured = frame._kps[[i for _, i in pairs]]
-            rejected = ~visible | (np.linalg.norm(pixels - measured, axis=1) > max_error)
-            for (point, _), invalid in zip(pairs, rejected):
+            errors = np.linalg.norm(pixels - measured, axis=1)
+            rejected = ~visible | (errors > max_error)
+            for (point, index), invalid, error, depth in zip(pairs, rejected, errors, depths):
+                # Keep rejected historical checks and the latest live check;
+                # replaying all old accepted residuals would swamp new evidence.
+                if self.observation_history and (invalid or frame is point.frames[-1]):
+                    point.record_quality(current_id, frame.id, 'cull', 'rejected' if invalid else 'retained',
+                                         error, depth, index)
                 if invalid:
-                    point.remove_observation(frame)
+                    point.remove_observation(frame, reason='culled', assessed_frame_id=current_id)
         for point in list(self.points):
             last_seen = max((frame.id for frame in point.frames), default=-1)
             if self.landmark_maturity:
@@ -103,7 +123,7 @@ class Map:
             expired_candidate = (self.landmark_maturity and point.state == 'candidate'
                                  and point.born_frame_id is not None and current_id - point.born_frame_id > 30)
             if len(point.frames) < 2 or expired_candidate or (len(point.frames) <= 2 and current_id - last_seen > stale_after):
-                point.delete_point('outlier' if len(point.frames) < 2 else 'stale')
+                point.delete_point('outlier' if len(point.frames) < 2 else 'stale', assessed_frame_id=current_id)
                 removed += 1
         return removed
 

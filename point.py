@@ -2,6 +2,7 @@
 
 import numpy as np
 from geometry import project
+from observation_quality import ObservationQuality, measurement
 
 
 class Point:
@@ -23,6 +24,20 @@ class Point:
         self.quality = {'reason': 'needs_three_views', 'parallax_degrees': None, 'max_residual_px': None}
         self.retirement_reason = None
         self.map.landmark_counts['candidate'] += 1
+        self.observation_quality = ObservationQuality() if self.map.observation_history else None
+
+    def record_quality(self, assessed, observed, phase, outcome, residual=None, depth=None, index=None):
+        if self.observation_quality is not None:
+            if self.observation_quality.record(assessed, observed, phase, outcome, residual, depth, index):
+                self.map.quality_events[f'{phase}/{outcome}'] += 1
+
+    def quality_snapshot(self, current_id):
+        """Serializable evidence; maturity classification is separate from history."""
+        return {'point_id': self.id, 'state': self.state if self.map.landmark_maturity or self.deleted else 'unassessed',
+                'born_frame_id': self.born_frame_id,
+                'age_source_frames': max(0, current_id - self.born_frame_id) if self.born_frame_id is not None else None,
+                'live_observations': len(self.frames), 'retirement_reason': self.retirement_reason,
+                'history': self.observation_quality.summary() if self.observation_quality is not None else None}
 
     def _set_state(self, state):
         if state == self.state:
@@ -100,10 +115,14 @@ class Point:
         frame.pts[index] = self
         if self.born_frame_id is None:
             self.born_frame_id = frame.id
+        if self.observation_quality is not None:
+            residual, depth = measurement(self.point, frame, index)
+            assessed = max(frame.id, self.map.frames[-1].id if self.map.frames else frame.id)
+            self.record_quality(assessed, frame.id, 'observation', 'added', residual, depth, index)
         if self.map.landmark_maturity:
             self.refresh_maturity()
 
-    def remove_observation(self, frame):
+    def remove_observation(self, frame, reason='removed', assessed_frame_id=None):
         if frame not in self.frames:
             return
         position = self.frames.index(frame)
@@ -113,10 +132,13 @@ class Point:
         self.idx.pop(position)
         self.frames.pop(position)
         frame.pts[index] = None
+        if not self.deleted:
+            assessed = assessed_frame_id if assessed_frame_id is not None else (self.map.frames[-1].id if self.map.frames else frame.id)
+            self.record_quality(assessed, frame.id, 'observation', reason, index=index)
         if self.map.landmark_maturity:
             self.refresh_maturity()
 
-    def delete_point(self, reason='retired'):
+    def delete_point(self, reason='retired', assessed_frame_id=None):
         if self.deleted:
             return
         self.deleted = True  # Unlinking a retired point is not a quality demotion.
@@ -126,6 +148,10 @@ class Point:
             self.map.points.remove(self)
         self.retirement_reason = reason
         self._set_state('outlier' if reason == 'outlier' else 'retired')
+        if self.observation_quality is not None:
+            assessed = assessed_frame_id if assessed_frame_id is not None else (self.map.frames[-1].id if self.map.frames else (self.born_frame_id or 0))
+            self.record_quality(assessed, assessed, 'retirement', reason)
+            self.map.retired_quality.append(self.quality_snapshot(assessed))
 
     def homogenous(self):
         return np.r_[self.point, 1.0]
