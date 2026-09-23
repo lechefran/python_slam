@@ -63,6 +63,7 @@ class MappingKeyframes:
             raise ValueError('Keyframes must advance source ID and time')
 
     def _insert(self, frame, decision, support):
+        self.mapping.trajectory.mark_keyframe(frame.id)
         self.frames.append(frame)
         self._reference_support = frozenset(support)
         self.insertions.append(decision)

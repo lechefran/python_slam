@@ -55,8 +55,9 @@ time; selected Frame references remain live through subsequent BA/culling.
 
 ## Next boundaries
 
-Selection establishes a distinct subset; it does not yet provide covisibility,
-relative non-keyframe anchoring, frame retirement, or bounded keyframe storage.
+Selection establishes a distinct subset. [Relative trajectory anchoring and
+correction propagation](trajectory-records.md) are now implemented. Covisibility,
+frame retirement and bounded keyframe storage remain pending.
 Those changes need separate geometry and recovery checks before selected frames
 can replace the current estimator inputs. An identical trajectory in this step
 checks behavior preservation, not accuracy improvement.

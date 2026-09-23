@@ -4,6 +4,7 @@ import subprocess
 import sys
 
 import pytest
+import numpy as np
 
 from scripts.generate_demo import generate
 
@@ -36,6 +37,18 @@ def test_headless_video_report_and_no_gui_imports(tmp_path):
     selected_ids = {r['frame_id'] for r in selection['insertions']}
     assert selected_ids <= {r['frame_id'] for r in data['poses']}
     assert sum(bool(r['keyframe'] and r['keyframe']['selected']) for r in data['frames']) + 1 == selection['count']
+    records = {r['frame_id']: r for r in data['trajectory']['records']}
+    assert len(records) == data['decoded_frames']
+    for pose in data['poses']:
+        record = records[pose['frame_id']]
+        assert record['T_cw'] == pose['T_cw']
+        assert record['T_cw_initial'] is not None
+        assert record['is_keyframe'] == (pose['frame_id'] in selected_ids)
+        if not record['is_keyframe']:
+            root = records[record['reference_keyframe_id']]
+            assert root['is_keyframe'] and root['submap_id'] == record['submap_id']
+            np.testing.assert_allclose(np.asarray(record['T_cr']) @ root['T_cw'], record['T_cw'], atol=1e-10)
+
     assert any(row['ba'] and row['ba']['status'] == 'accepted' for row in data['frames'])
     probe = subprocess.run([sys.executable, '-c',
         'import slam, sys; assert "matplotlib.pyplot" not in sys.modules; assert "display" not in sys.modules'],

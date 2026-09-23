@@ -560,6 +560,8 @@ class SLAM:
                 if result.status == 'tracking':
                     result.keyframe = self.map.keyframes.consider(
                         frame, tracking_points, recovered=result.recovered_from is not None)
+                    if not result.keyframe['selected']:
+                        self.map.trajectory.set_reference(frame.id, self.map.keyframes.frames[-1].id)
             if self.recovery and result.status in ('initialized', 'tracking'):
                 if not self.keyframes.frames:
                     self.keyframes.add(self.map.frames[0])
@@ -783,6 +785,7 @@ def run(args):
                                'g2opy': importlib.metadata.version('g2opy')},
                'configuration': {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
                'mapping_keyframes': tracker.map.keyframes.summary() if tracker else None,
+               'trajectory': tracker.map.trajectory.to_dict() if tracker else None,
                'decoded_frames': len(results), 'accepted_poses': len(poses),
                'pose_coverage': len(poses) / len(results) if results else 0.0,
                'recovered_frames': sum(r.recovered_from is not None for r in results),

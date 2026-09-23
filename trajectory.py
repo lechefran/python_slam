@@ -1,6 +1,6 @@
 """Lightweight trajectory history, independent of feature/observation storage."""
 
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 
 import numpy as np
 
@@ -20,6 +20,12 @@ class TrajectoryRecord:
     status: str = 'pending'
     reason: str = ''
     T_cw: tuple | None = None
+    T_cw_initial: tuple | None = None
+    submap_id: int | None = None
+    scale_status: str | None = None
+    is_keyframe: bool = False
+    reference_keyframe_id: int | None = None
+    T_cr: tuple | None = None
 
 
 class Trajectory:
@@ -46,25 +52,100 @@ class Trajectory:
     def finish(self, frame_id, status, reason=''):
         self._records[frame_id] = replace(self._records[frame_id], status=status, reason=reason)
 
-    def accept(self, frame_id, timestamp, pose):
+    @staticmethod
+    def _pose(pose):
+        pose = np.asarray(pose, dtype=float)
         if not valid_pose(pose):
-            raise ValueError('Invalid trajectory pose')
+            raise ValueError('Invalid trajectory pose or correction')
+        return tuple(tuple(float(x) for x in row) for row in pose)
+
+    def _accepted_record(self, frame_id):
+        record = self._records.get(frame_id)
+        if record is None or record.T_cw is None:
+            raise ValueError('Trajectory reference requires an accepted pose')
+        return record
+
+    def accept(self, frame_id, timestamp, pose, submap_id=0):
+        owned = self._pose(pose)
+        if type(submap_id) is not int or submap_id < 0:
+            raise ValueError('Submap ID must be a nonnegative integer')
         if frame_id not in self._records:
             self.begin(frame_id, timestamp)
             self.finish(frame_id, "accepted")
-        if self._records[frame_id].timestamp != timestamp:
-            raise ValueError('Trajectory timestamp mismatch')
-        self.update_poses({frame_id: pose})
+        record = self._records[frame_id]
+        if record.timestamp != timestamp or record.T_cw is not None:
+            raise ValueError('Trajectory timestamp mismatch or pose already accepted')
+        self._records[frame_id] = replace(record, T_cw=owned, T_cw_initial=owned,
+                                          submap_id=submap_id, scale_status='arbitrary')
 
-    def update_poses(self, poses):
-        """Publish validated 4x4 T_cw corrections together, without frame references."""
+    def mark_keyframe(self, frame_id):
+        record = self._accepted_record(frame_id)
+        self._records[frame_id] = replace(record, is_keyframe=True,
+                                          reference_keyframe_id=None, T_cr=None)
+
+    def _linked(self, record, reference):
+        if not reference.is_keyframe or reference.T_cw is None:
+            raise ValueError('Reference must be an accepted keyframe')
+        if record.frame_id == reference.frame_id or record.is_keyframe:
+            raise ValueError('Only non-keyframes can have a distinct reference')
+        if (record.submap_id, record.scale_status) != (reference.submap_id, reference.scale_status):
+            raise ValueError('Cannot link different submap or scale contexts')
+        # T_cr maps reference-camera coordinates to current-camera coordinates:
+        # T_cw = T_cr @ T_rw, hence T_cr = T_cw @ inverse(T_rw).
+        relative = np.asarray(record.T_cw) @ np.linalg.inv(np.asarray(reference.T_cw))
+        return replace(record, reference_keyframe_id=reference.frame_id, T_cr=self._pose(relative))
+
+    def set_reference(self, frame_id, reference_id):
+        record = self._accepted_record(frame_id)
+        reference = self._accepted_record(reference_id)
+        self._records[frame_id] = self._linked(record, reference)
+
+    def reanchor_dependents(self, old_reference_id, new_reference_id):
+        """Move dependencies before future keyframe retirement, preserving T_cw."""
+        old = self._accepted_record(old_reference_id)
+        new = self._accepted_record(new_reference_id)
+        if not old.is_keyframe or not new.is_keyframe or old.frame_id == new.frame_id:
+            raise ValueError('Reanchoring requires two distinct keyframes')
+        if (old.submap_id, old.scale_status) != (new.submap_id, new.scale_status):
+            raise ValueError('Cannot reanchor across submap or scale contexts')
+        updates = {r.frame_id: self._linked(r, new) for r in self._records.values()
+                   if r.reference_keyframe_id == old_reference_id}
+        self._records.update(updates)
+
+    def update_poses(self, poses, independent_ids=()):
+        """Atomically correct T_cw and propagate to dependent historical records.
+
+        Explicit estimates win over propagation. Retained mapping frames listed
+        in independent_ids keep their authoritative poses if absent from poses;
+        refresh their relative transforms when their reference changes. Archived
+        records instead retain T_cr and follow the corrected reference camera.
+        """
+        independent = set(independent_ids)
         updates = {}
         for frame_id, pose in poses.items():
-            if not valid_pose(pose):
-                raise ValueError('Invalid trajectory correction')
-            updates[frame_id] = replace(self._records[frame_id],
-                                       T_cw=tuple(tuple(float(x) for x in row) for row in pose))
+            record = self._accepted_record(frame_id)
+            updates[frame_id] = replace(record, T_cw=self._pose(pose))
+        # All references are keyframes (roots), so this is one atomic pass, not a
+        # recursive chain. Compute everything before publishing any correction.
+        for record in self._records.values():
+            reference_id = record.reference_keyframe_id
+            if reference_id is None or (record.frame_id not in updates and reference_id not in updates):
+                continue
+            current = updates.get(record.frame_id, record)
+            reference = updates.get(reference_id, self._records[reference_id])
+            if record.frame_id in poses or record.frame_id in independent:
+                updates[record.frame_id] = self._linked(current, reference)
+            else:
+                pose = np.asarray(record.T_cr) @ np.asarray(reference.T_cw)
+                updates[record.frame_id] = replace(record, T_cw=self._pose(pose))
         self._records.update(updates)
+
+    def to_dict(self):
+        """Correction provenance is additive; the existing poses list stays stable."""
+        return {'schema_version': 1, 'pose_convention': 'world_to_camera',
+                'relative_convention': 'T_cw = T_cr @ T_reference_world',
+                'initial_pose_semantics': 'first accepted pose before later BA corrections',
+                'records': [asdict(record) for record in self._records.values()]}
 
     def pose_rows(self):
         """Keep the existing JSON pose contract, independently of mapping frames."""

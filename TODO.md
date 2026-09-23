@@ -507,7 +507,7 @@ MAGSAC does not eliminate the need for a useful noise/termination threshold, and
 
 - **Finding:** every `Frame` is stored forever and participates in graph setup (`frame.py:23–25`, `dmap.py:109`). There is no keyframe decision or covisibility structure.
 - [ ] Retain a lightweight timestamped pose/status trajectory for all input frames; keep full descriptors/observations only for keyframes and the bounded tracking cache.
-- [ ] Store each accepted non-keyframe's reference keyframe ID, relative transform, and submap/scale context so later keyframe corrections can update its map trajectory. Reanchor these records before culling their reference keyframe; preserve a separate original odometry history if needed.
+- [x] Store accepted non-keyframe reference IDs, relative transforms, submap/scale context and first-accepted poses; atomically propagate corrections to dependent history and preserve independently estimated retained cameras. Add pose-preserving reanchoring for future retirement; actual reference-keyframe culling remains pending. See [trajectory corrections](docs/trajectory-records.md).
 - [x] Select mapping keyframes using verified overlap/support, rotation-compensated parallax, rotation, elapsed source time and recovery; preserve initialization anchors and report every decision. [Policy and scope](docs/keyframe-selection.md): selection establishes the subset; estimator inputs and full frame retention remain unchanged.
 - [ ] Build a small covisibility structure from shared validated landmarks; choose local keyframes/points and required fixed boundary cameras from it.
 - [ ] Cull redundant keyframes without deleting the only observations that constrain a landmark or disconnecting the local graph. Use stable IDs independent of list positions.

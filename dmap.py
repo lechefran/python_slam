@@ -245,7 +245,12 @@ class Map:
                 # Publish both cameras and landmarks only after validating the
                 # entire candidate state; rejection cannot partially move the map.
                 # Trajectory snapshots follow the same accepted BA revision.
-                self.trajectory.update_poses({f.id: p for f, p in new_poses.items() if f not in fixed})
+                # Retained frames are independently constrained map cameras: a
+                # reference correction must not move fixed/out-of-graph cameras.
+                # Historical records without a retained frame follow their root.
+                self.trajectory.update_poses(
+                    {f.id: p for f, p in new_poses.items() if f not in fixed},
+                    independent_ids=(f.id for f in self.frames))
                 for frame, pose in new_poses.items():
                     if frame not in fixed:
                         frame.pose = pose

@@ -4,7 +4,7 @@ A small classical **sparse monocular SLAM prototype**: ORB image features, calib
 
 Camera poses are world-to-camera transforms. Translation and map coordinates have **arbitrary scale**. There is no loop closure, general relocalization, dense reconstruction, or persistent top-down map yet. The image panel is a tracking view, not a 2D map. Planned improvements and point-data interchange are in [TODO.md](TODO.md).
 
-Trajectory history is stored independently of mapping frames; see [trajectory records](docs/trajectory-records.md). [Mapping keyframes](docs/keyframe-selection.md) are selected with explicit geometric/support evidence; frame retirement is not yet enabled.
+Trajectory history is stored independently of mapping frames, with reference transforms that preserve keyframe corrections; see [trajectory records](docs/trajectory-records.md). [Mapping keyframes](docs/keyframe-selection.md) are selected with explicit geometric/support evidence; frame retirement is not yet enabled.
 
 ## Setup on macOS or Linux
 
