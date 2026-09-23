@@ -85,6 +85,7 @@ def test_process_recovers_after_normal_failure_and_commits_once(scene, monkeypat
     camera, result = tracker.process(image, current.id, current.timestamp,
                                      diagnostics=diagnostics, capture_trace=diagnostics)
     assert result.status == 'tracking' and result.recovered_from == 0
+    assert result.keyframe['selected'] and 'recovery' in result.keyframe['reasons']
     assert result.added_points == 0 and result.inliers == 60
     assert len(tracker.map.frames) == 4 and tracker.map.frames.count(camera) == 1
     assert tracker.reference is current and tracker.reference is not previous

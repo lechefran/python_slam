@@ -64,6 +64,7 @@ class FrameResult:
     ba: dict | None = None
     diagnostics: dict | None = None
     recovered_from: int | None = None
+    keyframe: dict | None = None
     landmark_quality: dict | None = None
     observation_quality: dict | None = None
 
@@ -398,6 +399,7 @@ class SLAM:
         if self.last_trace is not None:
             self.last_trace['feature_pixels'] = frame._kps.tolist()
         stage = 'reference'
+        tracking_points = []
 
         def observe(name):
             """Allocate optional evidence without altering a producer's decisions."""
@@ -513,6 +515,7 @@ class SLAM:
                     # Commit only after the final map-based pose passes validation;
                     # newly associated points already contributed to this estimate.
                     self.map.add_frame(frame)
+                    tracking_points = [points[n] for n in selected]
                     for n in selected:
                         points[n].add_observation(frame, indices[n])
                     result.inliers = len(selected)
@@ -547,6 +550,16 @@ class SLAM:
                     self.map.cull(frame.id)
                     if evidence is not None:
                         evidence['timing_seconds']['optimization_and_culling'] = time.perf_counter() - stage_start
+            if result.status in ('initialized', 'tracking'):
+                # Select only after successful pose commit and scheduled BA/culling.
+                # Recovery representatives remain independent of mapping selection.
+                if not self.map.keyframes.frames:
+                    initial_decision = self.map.keyframes.initialize(self.map.frames[:2])
+                    if result.status == 'initialized':
+                        result.keyframe = initial_decision
+                if result.status == 'tracking':
+                    result.keyframe = self.map.keyframes.consider(
+                        frame, tracking_points, recovered=result.recovered_from is not None)
             if self.recovery and result.status in ('initialized', 'tracking'):
                 if not self.keyframes.frames:
                     self.keyframes.add(self.map.frames[0])
@@ -769,6 +782,7 @@ def run(args):
                                'numpy': np.__version__, 'opencv': cv2.__version__,
                                'g2opy': importlib.metadata.version('g2opy')},
                'configuration': {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
+               'mapping_keyframes': tracker.map.keyframes.summary() if tracker else None,
                'decoded_frames': len(results), 'accepted_poses': len(poses),
                'pose_coverage': len(poses) / len(results) if results else 0.0,
                'recovered_frames': sum(r.recovered_from is not None for r in results),

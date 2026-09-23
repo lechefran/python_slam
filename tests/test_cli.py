@@ -30,6 +30,12 @@ def test_headless_video_report_and_no_gui_imports(tmp_path):
     data = json.loads(report.read_text())
     assert data['decoded_frames'] == 25 and data['accepted_poses'] >= 10
     assert data['landmarks'] >= 20 and data['outcome'] == 'completed'
+    selection = data['mapping_keyframes']
+    assert 2 <= selection['count'] < data['accepted_poses']
+    assert not selection['affects_estimation']
+    selected_ids = {r['frame_id'] for r in selection['insertions']}
+    assert selected_ids <= {r['frame_id'] for r in data['poses']}
+    assert sum(bool(r['keyframe'] and r['keyframe']['selected']) for r in data['frames']) + 1 == selection['count']
     assert any(row['ba'] and row['ba']['status'] == 'accepted' for row in data['frames'])
     probe = subprocess.run([sys.executable, '-c',
         'import slam, sys; assert "matplotlib.pyplot" not in sys.modules; assert "display" not in sys.modules'],

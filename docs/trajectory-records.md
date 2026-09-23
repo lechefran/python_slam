@@ -17,7 +17,7 @@
 
 This is the first MAP-05 slice. All accepted mapping frames are still retained;
 feature selection, recovery and optimization policies are unchanged. It does not
-reduce memory yet. Keyframe selection, relative reference poses/reanchoring,
+reduce memory yet. Keyframe selection is now [implemented separately](keyframe-selection.md). Relative reference poses/reanchoring,
 non-keyframe retirement and bounded feature storage remain separate follow-ups.
 Before implementing retirement, every path that corrects a pose must publish the
 same correction to the trajectory, and non-keyframes must follow reference-pose

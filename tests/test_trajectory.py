@@ -61,6 +61,7 @@ def test_lost_frame_has_outcome_without_identity_pose(scene):
     _, result = tracker.process(np.zeros((480, 640, 3), np.uint8), 3, .1)
     record = mapping.trajectory.records[-1]
     assert record.status == result.status == 'lost'
+    assert result.keyframe is None and not mapping.keyframes.frames
     assert record.reason == result.reason
     assert record.T_cw is None
     assert len(mapping.trajectory.accepted) == 3

@@ -9,6 +9,7 @@ import numpy as np
 
 from geometry import pose_rt, project, valid_pose
 from trajectory import Trajectory
+from keyframes import MappingKeyframes
 
 
 @dataclass
@@ -44,6 +45,7 @@ class Map:
     def __init__(self, landmark_maturity=False, observation_history=True):
         self.frames = []
         self.trajectory = Trajectory()
+        self.keyframes = MappingKeyframes(self)
         self.points = []
         self.max_point = 0
         self.next_frame_id = 0
