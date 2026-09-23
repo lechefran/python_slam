@@ -4,6 +4,8 @@ A small classical **sparse monocular SLAM prototype**: ORB image features, calib
 
 Camera poses are world-to-camera transforms. Translation and map coordinates have **arbitrary scale**. There is no loop closure, general relocalization, dense reconstruction, or persistent top-down map yet. The image panel is a tracking view, not a 2D map. Planned improvements and point-data interchange are in [TODO.md](TODO.md).
 
+Trajectory history is stored independently of mapping frames; see [trajectory records](docs/trajectory-records.md).
+
 ## Setup on macOS or Linux
 
 Use **CPython 3.11–3.14** and a fresh virtual environment. The initial binary-install target is Apple Silicon macOS and 64-bit glibc Linux (x86-64/ARM64, glibc 2.28 or newer). This is not a guarantee for every Linux distribution, architecture, or Python build. Alpine/musl, 32-bit systems, and older glibc need a separately validated native build or the container below.

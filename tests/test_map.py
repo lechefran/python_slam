@@ -14,10 +14,10 @@ def test_native_camera_projection(scene):
     np.testing.assert_allclose(projection[:2] / projection[2], frame._kps[0], atol=1e-10)
 
 
+@pytest.mark.parametrize("scene", [[0, 1, 65536]], indirect=True)
 def test_native_bundle_adjustment_and_large_ids(scene):
     mapping, xyz, _ = scene
     anchors = [f.pose.copy() for f in mapping.frames[:2]]
-    mapping.frames[2].id = 65536
     mapping.frames[2].pose[0, 3] += .1
     rng = np.random.default_rng(12)
     for point in mapping.points:

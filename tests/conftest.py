@@ -14,14 +14,14 @@ class Camera:
 
 
 @pytest.fixture
-def scene():
+def scene(request):
     rng = np.random.default_rng(4)
     xyz = rng.uniform([-1.5, -1, 4], [1.5, 1, 8], (60, 3))
     k = np.array([[500., 0, 320], [0, 510, 240], [0, 0, 1]])
     mapping = Map()
     for number in range(3):
         camera = Camera()
-        camera.id = number
+        camera.id = getattr(request, "param", [0, 1, 2])[number]
         camera.timestamp = number / 30
         camera.k = k
         camera.pose = np.eye(4)

@@ -379,6 +379,7 @@ class SLAM:
 
     def process(self, image, frame_id, timestamp, diagnostics=False, capture_trace=False):
         """Produce a frame result; failed visual estimates never mutate the map."""
+        self.map.trajectory.begin(frame_id, timestamp)
         start = time.perf_counter()
         # Scalar diagnostics can be retained per frame. Pixel/XYZ snapshots are
         # transient and requested only in the diagnostic window, before BA edits.
@@ -568,6 +569,7 @@ class SLAM:
             if result.status == 'lost':
                 self.map.quality_events['tracking/lost_unassessed'] += 1
             result.observation_quality = self.map.observation_summary()
+        self.map.trajectory.finish(frame_id, result.status, result.reason)
         result.processing_seconds = time.perf_counter() - start
         return frame, result
 
@@ -760,7 +762,7 @@ def run(args):
         if diagnostic_writer:
             diagnostic_writer.finish()
     elapsed = time.perf_counter() - start
-    poses = [] if tracker is None else [{'frame_id': f.id, 'timestamp': f.timestamp, 'T_cw': f.pose.tolist()} for f in tracker.map.frames]
+    poses = [] if tracker is None else tracker.map.trajectory.pose_rows()
     summary = {'schema_version': 1, 'outcome': outcome, 'error': failure,
                'video': str(args.video.resolve()), 'camera': metadata, 'feature_mask': mask_metadata,
                'environment': {'python': platform.python_version(), 'platform': platform.platform(),

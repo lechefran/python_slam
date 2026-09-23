@@ -99,10 +99,12 @@ class Viewer:
             self.image_axes.set_title(f'Frame {frame.id}: {status}\nSpace: pause | O: ORB | M: exclusions (orange) | Q: close', fontsize=10)
             axes = self.map_axes
             axes.clear()
-            if map3d.frames:
+            trajectory = map3d.trajectory.accepted
+            if trajectory:
                 # Camera position is the translation of T_wc, not of T_cw.
-                centres = np.array([-f.pose[:3, :3].T @ f.pose[:3, 3] for f in map3d.frames])
-                cuts = np.flatnonzero(np.diff([f.id for f in map3d.frames]) > 1) + 1
+                poses = [np.asarray(record.T_cw) for record in trajectory]
+                centres = np.array([-pose[:3, :3].T @ pose[:3, 3] for pose in poses])
+                cuts = np.flatnonzero(np.diff([record.frame_id for record in trajectory]) > 1) + 1
                 for segment in np.split(centres, cuts):
                     axes.plot(*segment.T, color='tab:blue')
                 axes.scatter(*centres[-1], color='orange', s=35)

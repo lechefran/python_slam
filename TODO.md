@@ -503,6 +503,8 @@ MAGSAC does not eliminate the need for a useful noise/termination threshold, and
 
 ### MAP-05 — Separate frames from keyframes and maintain a local map [P1]
 
+- [x] Separate lightweight source-frame outcomes and accepted pose snapshots from mapping-frame storage; publish accepted BA corrections and use trajectory records for reports/viewer paths. See [trajectory records](docs/trajectory-records.md). Full frame retention remains unchanged in this first slice.
+
 - **Finding:** every `Frame` is stored forever and participates in graph setup (`frame.py:23–25`, `dmap.py:109`). There is no keyframe decision or covisibility structure.
 - [ ] Retain a lightweight timestamped pose/status trajectory for all input frames; keep full descriptors/observations only for keyframes and the bounded tracking cache.
 - [ ] Store each accepted non-keyframe's reference keyframe ID, relative transform, and submap/scale context so later keyframe corrections can update its map trajectory. Reanchor these records before culling their reference keyframe; preserve a separate original odometry history if needed.
