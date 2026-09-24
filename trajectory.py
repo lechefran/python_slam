@@ -24,6 +24,7 @@ class TrajectoryRecord:
     submap_id: int | None = None
     scale_status: str | None = None
     is_keyframe: bool = False
+    retired: bool = False
     reference_keyframe_id: int | None = None
     T_cr: tuple | None = None
 
@@ -80,11 +81,13 @@ class Trajectory:
 
     def mark_keyframe(self, frame_id):
         record = self._accepted_record(frame_id)
+        if record.retired:
+            raise ValueError('Cannot promote a retired frame')
         self._records[frame_id] = replace(record, is_keyframe=True,
                                           reference_keyframe_id=None, T_cr=None)
 
     def _linked(self, record, reference):
-        if not reference.is_keyframe or reference.T_cw is None:
+        if not reference.is_keyframe or reference.retired or reference.T_cw is None:
             raise ValueError('Reference must be an accepted keyframe')
         if record.frame_id == reference.frame_id or record.is_keyframe:
             raise ValueError('Only non-keyframes can have a distinct reference')
@@ -111,6 +114,17 @@ class Trajectory:
         updates = {r.frame_id: self._linked(r, new) for r in self._records.values()
                    if r.reference_keyframe_id == old_reference_id}
         self._records.update(updates)
+
+    def retirement_updates(self, frame_id, replacement_id):
+        """Prepare pose-preserving reanchoring and demotion, without publication."""
+        record = self._accepted_record(frame_id)
+        reference = self._accepted_record(replacement_id)
+        if reference.retired:
+            raise ValueError('Cannot reanchor to a retired frame')
+        updates = {r.frame_id: self._linked(r, reference) for r in self._records.values()
+                   if r.reference_keyframe_id == frame_id}
+        updates[frame_id] = self._linked(replace(record, is_keyframe=False, retired=True), reference)
+        return updates
 
     def update_poses(self, poses, independent_ids=()):
         """Atomically correct T_cw and propagate to dependent historical records.

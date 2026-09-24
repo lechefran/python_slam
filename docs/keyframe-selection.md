@@ -56,8 +56,8 @@ time; selected Frame references remain live through subsequent BA/culling.
 ## Next boundaries
 
 Selection establishes a distinct subset. [Relative trajectory anchoring and
-correction propagation](trajectory-records.md) are now implemented. Covisibility,
-frame retirement and bounded keyframe storage remain pending.
+correction propagation](trajectory-records.md) are now implemented. [Shared-landmark local BA selection](local-map-selection.md) is available as an
+opt-in policy. [Guarded frame retirement](frame-retirement.md) is opt-in; hard storage bounds remain pending.
 Those changes need separate geometry and recovery checks before selected frames
 can replace the current estimator inputs. An identical trajectory in this step
 checks behavior preservation, not accuracy improvement.

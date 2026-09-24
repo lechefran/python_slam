@@ -59,10 +59,9 @@ reference IDs/transforms, keyframe flags, initial poses and submap/scale labels.
 It documents transform direction and initial-pose semantics explicitly. This is
 correction provenance, not a resumable map serialization format.
 
-[Keyframe selection](keyframe-selection.md) is implemented. All accepted mapping
-frames still remain retained; tracking, triangulation, recovery and BA selection
-policies are unchanged. Frame retirement, covisibility, bounded feature storage
-and Sim(3)/loop corrections remain separate work. Direct registered-ID mutation
+[Keyframe selection](keyframe-selection.md) is implemented. Mapping frames remain retained by default; opt-in [guarded retirement](frame-retirement.md)
+can remove redundant storage after reanchoring. [Shared-landmark BA selection](local-map-selection.md)
+is now opt-in; the temporal baseline remains the default. Hard memory bounds and Sim(3)/loop corrections remain separate work. Direct registered-ID mutation
 or pose mutation outside the validated map-update path is unsupported.
 
 ## Validation

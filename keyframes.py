@@ -152,4 +152,6 @@ class MappingKeyframes:
     def summary(self):
         return {'schema_version': 1, 'policy': asdict(self.policy),
                 'count': len(self.frames), 'insertions': self.insertions.copy(),
+                'retained_frame_ids': [f.id for f in self.frames],
+                'selected_count': len(self.insertions),
                 'affects_estimation': False}

@@ -104,9 +104,14 @@ def test_bootstrap_is_limited_to_initial_pair_and_never_recovery(scene):
     point.bootstrap = True
     assert not tracker.pose_landmark(point)
     third = mapping.frames.pop()
+    # Storage retirement cannot rewind the lifetime initialization state.
+    assert not tracker.pose_landmark(point)
+    # Separately model the genuine initial-pair phase in this fixture.
+    mapping.accepted_frame_count = 2
     assert tracker.pose_landmark(point)
     assert not tracker.pose_landmark(point, recovery=True)
     mapping.frames.append(third)
+    mapping.accepted_frame_count = 3
     assert not tracker.pose_landmark(point)
 
 

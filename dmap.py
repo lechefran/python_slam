@@ -21,6 +21,7 @@ class OptimizationResult:
     before_chi2: float | None = None
     after_chi2: float | None = None
     seconds: float = 0.0
+    local_map: dict | None = None
 
     def to_dict(self):
         # Failed native estimates can contain NaN costs; preserve the failure
@@ -42,13 +43,19 @@ def camera_vertex(frame, identifier, fixed):
 
 
 class Map:
-    def __init__(self, landmark_maturity=False, observation_history=True):
+    def __init__(self, landmark_maturity=False, observation_history=True, local_map_policy='temporal'):
+        if local_map_policy not in ('temporal', 'shared'):
+            raise ValueError('Unknown local map policy')
+        self.local_map_policy = local_map_policy
         self.frames = []
         self.trajectory = Trajectory()
         self.keyframes = MappingKeyframes(self)
         self.points = []
         self.max_point = 0
         self.next_frame_id = 0
+        self.accepted_frame_count = 0
+        self.retired_frame_ids = []
+        self._retirement_cursor = -1
         self.landmark_maturity = landmark_maturity
         self.landmark_counts = {'candidate': 0, 'active': 0, 'outlier': 0, 'retired': 0}
         self.maturity_events = {'promotions': 0, 'demotions': 0}
@@ -77,6 +84,7 @@ class Map:
             raise ValueError('Cannot register an invalid camera pose')
         self.trajectory.accept(frame.id, frame.timestamp, frame.pose)
         self.frames.append(frame)
+        self.accepted_frame_count += 1
         self.next_frame_id = max(self.next_frame_id, frame.id + 1)
 
     def check_integrity(self):
@@ -132,6 +140,132 @@ class Map:
                 removed += 1
         return removed
 
+    def retire_frame(self, frame, protected=(), recent_window=64):
+        """Retire only redundant measurements; preserve pose history and constraints.
+
+        A surviving keyframe must observe every affected point, which preserves
+        connectivity through this camera. Keep every point's first two and last
+        three observations, protecting BA boundaries, maturity and recency.
+        """
+        if type(recent_window) is not int or recent_window < 2:
+            raise ValueError('Retirement must preserve at least two recent frames')
+        result = {'frame_id': frame.id, 'status': 'kept', 'reason': '', 'replacement_id': None}
+        if frame not in self.frames:
+            result['reason'] = 'not_retained'
+            return result
+        guards = set(protected) | set(self.frames[:2]) | set(self.frames[-recent_window:])
+        if self.keyframes.frames:
+            guards.add(self.keyframes.frames[-1])
+        if frame in guards or self.frames[-1].timestamp - frame.timestamp < 1.:
+            result['reason'] = 'protected_or_recent'
+            return result
+        points = [p for p in frame.pts if p is not None]
+        replacements = (set(self.keyframes.frames) & set(self.frames)) - {frame}
+        for point in points:
+            if frame in point.frames[:2] or frame in point.frames[-3:] or len(point.frames) < 4:
+                result['reason'] = 'essential_observation'
+                return result
+            replacements.intersection_update(point.frames)
+        if not replacements:
+            result['reason'] = 'no_common_surviving_keyframe'
+            return result
+        # Deterministic nearest-time replacement; require its observed geometry
+        # to be usable, not merely linked in a possibly noisy feature history.
+        replacement = None
+        for candidate in sorted(replacements, key=lambda f: (abs(f.timestamp - frame.timestamp), f.id)):
+            if points:
+                pixels, _, visible = project(candidate.k, candidate.pose, [p.point for p in points])
+                indices = [p.idx[p.frames.index(candidate)] for p in points]
+                errors = np.linalg.norm(pixels - candidate._kps[indices], axis=1)
+                if not np.all(visible & np.isfinite(errors) & (errors <= 3.)):
+                    continue
+            replacement = candidate
+            break
+        if replacement is None:
+            result['reason'] = 'unusable_replacement_geometry'
+            return result
+        self.check_integrity()
+        trajectory_updates = self.trajectory.retirement_updates(frame.id, replacement.id)
+        observations = {p: ([f for f in p.frames if f is not frame],
+                            [i for f, i in zip(p.frames, p.idx) if f is not frame]) for p in points}
+        # Stage both sides of every observation and all reference transforms.
+        # Keep rollback snapshots until the complete post-removal graph passes.
+        old_frames, old_keyframes, old_slots = self.frames, self.keyframes.frames, frame.pts
+        old_records = self.trajectory._records.copy()
+        old_observations = {p: (p.frames, p.idx) for p in points}
+        try:
+            self.trajectory._records.update(trajectory_updates)
+            for point, (frames, indices) in observations.items():
+                point.frames, point.idx = frames, indices
+            frame.pts = [None] * len(frame.pts)
+            self.frames = [f for f in self.frames if f is not frame]
+            self.keyframes.frames = [f for f in self.keyframes.frames if f is not frame]
+            self.check_integrity()
+        except Exception:
+            self.frames, self.keyframes.frames, frame.pts = old_frames, old_keyframes, old_slots
+            self.trajectory._records = old_records
+            for point, (frames, indices) in old_observations.items():
+                point.frames, point.idx = frames, indices
+            raise
+        # First/latest maturity evidence is unchanged; removal is bookkeeping,
+        # not a new independent observation or a reason to promote a landmark.
+        for point in points:
+            point.record_quality(self.frames[-1].id, frame.id, 'observation', 'frame_retired')
+        self.retired_frame_ids.append(frame.id)
+        result.update(status='retired', reason='redundant', replacement_id=replacement.id,
+                      removed_observations=len(points))
+        return result
+
+    def retire_redundant_frame(self, protected=(), max_checks=8):
+        """Bound each sweep to eight candidates and at most one actual retirement."""
+        candidates = self.frames[2:-64]
+        ordered = ([f for f in candidates if f.id > self._retirement_cursor]
+                   + [f for f in candidates if f.id <= self._retirement_cursor])
+        attempts = []
+        for frame in ordered[:max_checks]:
+            self._retirement_cursor = frame.id
+            result = self.retire_frame(frame, protected)
+            attempts.append(result)
+            if result['status'] == 'retired':
+                break
+        return {'attempts': attempts, 'retained_frames': len(self.frames),
+                'retired_frames': len(self.retired_frame_ids)}
+
+    def select_local_frames(self, local_window=10):
+        """Select the current view plus keyframes sharing live usable landmarks.
+
+        Scores count distinct reciprocal landmark observations, not descriptor
+        similarity. Recompute from live observations so culling cannot leave
+        stale covisibility links. Ties prefer the newer stable source-frame ID.
+        """
+        if local_window is not None and (type(local_window) is not int or local_window < 1):
+            raise ValueError('Local window must be a positive integer or None')
+        metadata = {'policy': self.local_map_policy, 'local_frame_ids': [], 'neighbors': []}
+        if not self.frames:
+            return set(), metadata
+        if self.local_map_policy == 'temporal':
+            local = set(self.frames if local_window is None else self.frames[-local_window:])
+        else:
+            current = self.frames[-1]
+            keyframes = set(self.keyframes.frames) & set(self.frames)
+            scores = Counter()
+            # Seed only from landmarks actually observed by the current camera;
+            # disconnected old views cannot enter merely because they are recent.
+            for point in set(p for p in current.pts if p is not None):
+                if point.deleted or len(point.frames) < 2 or (self.landmark_maturity and point.state != 'active'):
+                    continue
+                for frame in point.frames:
+                    if frame in keyframes and frame is not current:
+                        scores[frame] += 1
+            ranked = sorted((f for f, count in scores.items() if count >= 6),
+                            key=lambda f: (-scores[f], -f.id))
+            neighbors = ranked if local_window is None else ranked[:local_window - 1]
+            local = {current, *neighbors}
+            metadata.update(seed_frame_id=current.id, minimum_shared_landmarks=6,
+                            neighbors=[{'frame_id': f.id, 'shared_landmarks': scores[f]} for f in neighbors])
+        metadata['local_frame_ids'] = sorted(f.id for f in local)
+        return local, metadata
+
     def optimize(self, local_window=10, fix_points=False, verbose=False, iterations=10, max_points=600):
         """Refine a bounded local graph; commit only finite, non-worsening states.
 
@@ -144,11 +278,20 @@ class Map:
             result.reason = 'fewer than two accepted cameras'
             return result
         self.check_integrity()
-        local = set(self.frames if local_window is None else self.frames[-local_window:])
+        local, result.local_map = self.select_local_frames(local_window)
         anchors = set(self.frames[:2])
-        points = [p for p in self.points if len(p.frames) >= 2 and any(f in local for f in p.frames)
+        pool = (self.points if self.local_map_policy == 'temporal' else
+                {p for f in local for p in f.pts if p is not None and not p.deleted})
+        points = [p for p in pool if len(p.frames) >= 2 and any(f in local for f in p.frames)
                   and (not self.landmark_maturity or p.state == 'active')]
-        points.sort(key=lambda p: (-sum(f in local for f in p.frames), -p.frames[-1].id, p.id))
+        if self.local_map_policy == 'shared':
+            # Preserve the current camera's constraints before filling the point
+            # budget with landmarks from covisible keyframes only.
+            current = self.frames[-1]
+            points.sort(key=lambda p: (current not in p.frames, -sum(f in local for f in p.frames),
+                                       -p.frames[-1].id, p.id))
+        else:
+            points.sort(key=lambda p: (-sum(f in local for f in p.frames), -p.frames[-1].id, p.id))
         points = points[:max_points]
         if not points:
             result.reason = 'no supported local landmarks'
@@ -162,6 +305,9 @@ class Map:
             observations[point] = [(f, i) for f, i in pairs if f in local] + boundary
         graph_frames = sorted({f for pairs in observations.values() for f, _ in pairs}, key=lambda f: f.id)
         fixed = {f for f in graph_frames if f in anchors or f not in local}
+        result.local_map.update(fixed_frame_ids=sorted(f.id for f in fixed),
+                                graph_cameras=len(graph_frames), graph_points=len(points),
+                                point_budget=max_points)
         support = {f: sum(f is obs for pairs in observations.values() for obs, _ in pairs) for f in graph_frames}
         if any(support[f] < 6 for f in graph_frames if f not in fixed):
             result.reason = 'insufficient edges for a free camera'

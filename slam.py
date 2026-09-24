@@ -65,14 +65,16 @@ class FrameResult:
     diagnostics: dict | None = None
     recovered_from: int | None = None
     keyframe: dict | None = None
+    retirement: dict | None = None
     landmark_quality: dict | None = None
     observation_quality: dict | None = None
 
 
 class SLAM:
     def __init__(self, k, features=2000, mask_bottom=0.0, condition_pnp=True, spatial_mapping=True, robust_pnp=False,
-                 recovery=True, feature_mask=None, landmark_maturity=False, observation_history=True):
-        self.map = Map(landmark_maturity=landmark_maturity, observation_history=observation_history)
+                 recovery=True, feature_mask=None, landmark_maturity=False, observation_history=True, local_map_policy='temporal', retire_frames=False):
+        self.map = Map(landmark_maturity=landmark_maturity, observation_history=observation_history,
+                       local_map_policy=local_map_policy)
         self.k = k
         self.detector = cv2.ORB_create(nfeatures=features)
         self.reference = None
@@ -93,12 +95,13 @@ class SLAM:
         self.spatial_mapping = spatial_mapping
         self.recovery = recovery
         self.keyframes = RecoveryKeyframes()
+        self.retire_frames = retire_frames
 
     def pose_landmark(self, point, recovery=False):
         """New points cannot estimate poses, except the initial two-view bootstrap."""
         return (point is not None and not point.deleted and
                 (not self.map.landmark_maturity or point.state == 'active' or
-                 (not recovery and len(self.map.frames) == 2 and point.bootstrap)))
+                 (not recovery and self.map.accepted_frame_count == 2 and point.bootstrap)))
 
     def extraction_mask(self, shape):
         """Combine immutable processed exclusions with the legacy bottom strip once."""
@@ -455,7 +458,7 @@ class SLAM:
                     quality_attempts = dict(zip(points, indices)) if self.map.observation_history else None
                     if evidence is not None:
                         evidence['stages']['landmark_selection'] = {
-                            'policy': ('bootstrap' if len(self.map.frames) == 2 else 'active_only')
+                            'policy': ('bootstrap' if self.map.accepted_frame_count == 2 else 'active_only')
                                       if self.map.landmark_maturity else 'legacy',
                             'pose_inputs': len(points),
                             'candidate_inputs': sum(p.state == 'candidate' for p in points)
@@ -544,7 +547,7 @@ class SLAM:
                             evidence['timing_seconds']['triangulation'] = time.perf_counter() - stage_start
                     self.reference = frame
                     result.status = 'tracking'
-                if self.map.frames and len(self.map.frames) % 5 == 0:
+                if self.map.frames and self.map.accepted_frame_count % 5 == 0:
                     stage_start = time.perf_counter()
                     result.ba = self.map.optimize().to_dict()
                     self.map.cull(frame.id)
@@ -566,6 +569,14 @@ class SLAM:
                 if not self.keyframes.frames:
                     self.keyframes.add(self.map.frames[0])
                 self.keyframes.add(frame)
+            if (self.retire_frames and result.status in ('initialized', 'tracking')
+                    and self.map.accepted_frame_count % 20 == 0
+                    and result.ba and result.ba['status'] == 'accepted'):
+                graph = result.ba.get('local_map') or {}
+                active_ids = set(graph.get('local_frame_ids', [])) | set(graph.get('fixed_frame_ids', []))
+                result.retirement = self.map.retire_redundant_frame(
+                    protected=[self.reference, *self.keyframes.frames,
+                               *(f for f in self.map.frames if f.id in active_ids)])
         except TrackingError as exc:
             result.status = 'lost' if self.map.frames else 'initializing'
             result.reason = str(exc)
@@ -618,6 +629,10 @@ def parser():
     cli.add_argument('--feature-mask', type=Path, help='Source-size grayscale PNG: 0 excludes, 255 allows features')
     cli.add_argument('--seed', type=int, default=0)
     cli.add_argument('--threads', type=int, default=1, help='OpenCV worker threads')
+    cli.add_argument('--retire-frames', action=argparse.BooleanOptionalAction, default=False,
+                     help='Experimental guarded retirement of redundant old mapping frames')
+    cli.add_argument('--local-map-policy', choices=('temporal', 'shared'), default='temporal',
+                     help='BA neighborhood: recent frames (baseline) or shared-landmark keyframes (experimental)')
     cli.add_argument('--report', type=Path, help='Save JSON counts, outcomes and accepted world-to-camera poses')
     cli.add_argument('--diagnostics', action='store_true', help='Include tracking metrics in the report without image overlays')
     cli.add_argument('--diagnostics-dir', type=Path, help='New directory for tracking evidence and sampled PNG overlays')
@@ -733,7 +748,7 @@ def run(args):
                 feature_mask, mask_metadata = prepare_feature_mask(args.feature_mask, (source_w, source_h), (w, h), maps)
                 tracker = SLAM(k, args.features, args.mask_bottom, args.condition_pnp, args.spatial_mapping,
                                args.robust_pnp, args.recovery, feature_mask=feature_mask,
-                               landmark_maturity=args.landmark_maturity, observation_history=args.observation_history)
+                               landmark_maturity=args.landmark_maturity, observation_history=args.observation_history, local_map_policy=args.local_map_policy, retire_frames=args.retire_frames)
                 effective_mask = tracker.extraction_mask((h, w))
                 mask_metadata.update(bottom_fraction=args.mask_bottom,
                     excluded_fraction=float(np.mean(effective_mask == 0)) if effective_mask is not None else 0.0,
@@ -784,6 +799,9 @@ def run(args):
                                'numpy': np.__version__, 'opencv': cv2.__version__,
                                'g2opy': importlib.metadata.version('g2opy')},
                'configuration': {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()},
+               'frame_retirement': {'enabled': args.retire_frames,
+                                    'retained_frames': len(tracker.map.frames) if tracker else 0,
+                                    'retired_frame_ids': tracker.map.retired_frame_ids if tracker else []},
                'mapping_keyframes': tracker.map.keyframes.summary() if tracker else None,
                'trajectory': tracker.map.trajectory.to_dict() if tracker else None,
                'decoded_frames': len(results), 'accepted_poses': len(poses),
