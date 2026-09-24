@@ -8,6 +8,8 @@ Trajectory history is stored independently of mapping frames, with reference tra
 
 Experimental [local-map selection](docs/local-map-selection.md) uses shared landmarks to choose bundle-adjustment neighbors (`--local-map-policy shared`). The temporal baseline remains the default.
 
+Experimental [bounded frame storage](docs/trajectory-records.md#bounded-feature-storage) (`--tracking-cache-size 64`) retains full keyframes plus bounded recent/recovery caches, preserving every input's trajectory record. It remains off by default because dashcam coverage regresses.
+
 ## Setup on macOS or Linux
 
 Use **CPython 3.11–3.14** and a fresh virtual environment. The initial binary-install target is Apple Silicon macOS and 64-bit glibc Linux (x86-64/ARM64, glibc 2.28 or newer). This is not a guarantee for every Linux distribution, architecture, or Python build. Alpine/musl, 32-bit systems, and older glibc need a separately validated native build or the container below.

@@ -2,7 +2,7 @@
 """Sparse monocular SLAM: validated visual poses, native BA, optional desktop view."""
 
 import argparse
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import asdict, dataclass
 import hashlib
 import importlib.metadata
@@ -72,7 +72,10 @@ class FrameResult:
 
 class SLAM:
     def __init__(self, k, features=2000, mask_bottom=0.0, condition_pnp=True, spatial_mapping=True, robust_pnp=False,
-                 recovery=True, feature_mask=None, landmark_maturity=False, observation_history=True, local_map_policy='temporal', retire_frames=False):
+                 recovery=True, feature_mask=None, landmark_maturity=False, observation_history=True, local_map_policy='temporal', retire_frames=False,
+                 tracking_cache_size=None):
+        if tracking_cache_size is not None and (type(tracking_cache_size) is not int or tracking_cache_size < 2):
+            raise ValueError('tracking_cache_size must be an integer >= 2')
         self.map = Map(landmark_maturity=landmark_maturity, observation_history=observation_history,
                        local_map_policy=local_map_policy)
         self.k = k
@@ -96,6 +99,18 @@ class SLAM:
         self.recovery = recovery
         self.keyframes = RecoveryKeyframes()
         self.retire_frames = retire_frames
+        self.tracking_frames = deque(maxlen=tracking_cache_size or 0)
+
+    def frame_storage_summary(self):
+        """Recovery representatives are a separate bounded part of the cache."""
+        return {'enabled': bool(self.tracking_frames.maxlen),
+                'recent_capacity': self.tracking_frames.maxlen or None,
+                'recovery_capacity': self.keyframes.capacity if self.recovery else 0,
+                'retained_frames': len(self.map.frames),
+                'released_frames': self.map.accepted_frame_count - len(self.map.frames),
+                'keyframes': len(self.map.keyframes.frames),
+                'cached_non_keyframes': len(set(self.map.frames) - set(self.map.keyframes.frames)),
+                'trajectory_records': len(self.map.trajectory.records)}
 
     def pose_landmark(self, point, recovery=False):
         """New points cannot estimate poses, except the initial two-view bootstrap."""
@@ -569,13 +584,16 @@ class SLAM:
                 if not self.keyframes.frames:
                     self.keyframes.add(self.map.frames[0])
                 self.keyframes.add(frame)
+            if self.tracking_frames.maxlen and result.status in ('initialized', 'tracking'):
+                self.tracking_frames.append(frame)
+                self.map.evict_tracking_frames([*self.tracking_frames, *self.keyframes.frames])
             if (self.retire_frames and result.status in ('initialized', 'tracking')
                     and self.map.accepted_frame_count % 20 == 0
                     and result.ba and result.ba['status'] == 'accepted'):
                 graph = result.ba.get('local_map') or {}
                 active_ids = set(graph.get('local_frame_ids', [])) | set(graph.get('fixed_frame_ids', []))
                 result.retirement = self.map.retire_redundant_frame(
-                    protected=[self.reference, *self.keyframes.frames,
+                    protected=[self.reference, *self.tracking_frames, *self.keyframes.frames,
                                *(f for f in self.map.frames if f.id in active_ids)])
         except TrackingError as exc:
             result.status = 'lost' if self.map.frames else 'initializing'
@@ -631,6 +649,8 @@ def parser():
     cli.add_argument('--threads', type=int, default=1, help='OpenCV worker threads')
     cli.add_argument('--retire-frames', action=argparse.BooleanOptionalAction, default=False,
                      help='Experimental guarded retirement of redundant old mapping frames')
+    cli.add_argument('--tracking-cache-size', type=int,
+                     help='Experimental bounded storage: retain N recent accepted full frames plus up to 64 recovery views (minimum: 2; disabled by default)')
     cli.add_argument('--local-map-policy', choices=('temporal', 'shared'), default='temporal',
                      help='BA neighborhood: recent frames (baseline) or shared-landmark keyframes (experimental)')
     cli.add_argument('--report', type=Path, help='Save JSON counts, outcomes and accepted world-to-camera poses')
@@ -650,6 +670,8 @@ def run(args):
         raise ValueError('Invalid start frame, width, feature count, or thread count')
     if args.max_frames is not None and args.max_frames <= 0:
         raise ValueError('--max-frames must be positive')
+    if args.tracking_cache_size is not None and args.tracking_cache_size < 2:
+        raise ValueError('--tracking-cache-size must be at least 2')
     if not np.isfinite(args.mask_bottom) or not 0 <= args.mask_bottom < 1:
         raise ValueError('--mask-bottom must be in [0, 1)')
     if not -2147483648 <= args.seed <= 2147483647:
@@ -748,7 +770,8 @@ def run(args):
                 feature_mask, mask_metadata = prepare_feature_mask(args.feature_mask, (source_w, source_h), (w, h), maps)
                 tracker = SLAM(k, args.features, args.mask_bottom, args.condition_pnp, args.spatial_mapping,
                                args.robust_pnp, args.recovery, feature_mask=feature_mask,
-                               landmark_maturity=args.landmark_maturity, observation_history=args.observation_history, local_map_policy=args.local_map_policy, retire_frames=args.retire_frames)
+                               landmark_maturity=args.landmark_maturity, observation_history=args.observation_history, local_map_policy=args.local_map_policy, retire_frames=args.retire_frames,
+                               tracking_cache_size=args.tracking_cache_size)
                 effective_mask = tracker.extraction_mask((h, w))
                 mask_metadata.update(bottom_fraction=args.mask_bottom,
                     excluded_fraction=float(np.mean(effective_mask == 0)) if effective_mask is not None else 0.0,
@@ -802,7 +825,10 @@ def run(args):
                'frame_retirement': {'enabled': args.retire_frames,
                                     'retained_frames': len(tracker.map.frames) if tracker else 0,
                                     'retired_frame_ids': tracker.map.retired_frame_ids if tracker else []},
-               'mapping_keyframes': tracker.map.keyframes.summary() if tracker else None,
+               'mapping_keyframes': tracker.map.keyframes.summary(
+                   affects_estimation=args.tracking_cache_size is not None
+                   or args.local_map_policy == 'shared' or args.retire_frames) if tracker else None,
+               'frame_storage': tracker.frame_storage_summary() if tracker else None,
                'trajectory': tracker.map.trajectory.to_dict() if tracker else None,
                'decoded_frames': len(results), 'accepted_poses': len(poses),
                'pose_coverage': len(poses) / len(results) if results else 0.0,

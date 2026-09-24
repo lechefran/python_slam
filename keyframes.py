@@ -149,9 +149,9 @@ class MappingKeyframes:
         decision['reasons'] = reasons or ['redundant_view']
         return self._insert(frame, decision, support) if reasons else decision
 
-    def summary(self):
+    def summary(self, affects_estimation=False):
         return {'schema_version': 1, 'policy': asdict(self.policy),
                 'count': len(self.frames), 'insertions': self.insertions.copy(),
                 'retained_frame_ids': [f.id for f in self.frames],
                 'selected_count': len(self.insertions),
-                'affects_estimation': False}
+                'affects_estimation': affects_estimation}

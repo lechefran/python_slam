@@ -23,17 +23,27 @@ def test_help_and_invalid_input(tmp_path):
     assert result.returncode == 2 and 'does not exist' in result.stderr
 
 
-def test_headless_video_report_and_no_gui_imports(tmp_path):
+@pytest.mark.parametrize('cache_size', [None, 8, 64])
+def test_headless_video_report_and_no_gui_imports(tmp_path, cache_size):
     video = generate(tmp_path / 'demo.avi', 25)
     report = tmp_path / 'report.json'
-    result = call(video, '--headless', '--focal', '400', '--max-frames', 25, '--report', report)
+    extra = [] if cache_size is None else ['--tracking-cache-size', cache_size]
+    result = call(video, '--headless', '--focal', '400', '--max-frames', 25, '--report', report, *extra)
     assert result.returncode == 0, result.stdout + result.stderr
     data = json.loads(report.read_text())
     assert data['decoded_frames'] == 25 and data['accepted_poses'] >= 10
     assert data['landmarks'] >= 20 and data['outcome'] == 'completed'
     selection = data['mapping_keyframes']
     assert 2 <= selection['count'] < data['accepted_poses']
-    assert not selection['affects_estimation']
+    assert selection['affects_estimation'] == (cache_size is not None)
+    storage = data['frame_storage']
+    assert storage['recent_capacity'] == cache_size
+    assert storage['enabled'] == (cache_size is not None)
+    if cache_size is not None:
+        assert storage['cached_non_keyframes'] <= cache_size + storage['recovery_capacity']
+    assert storage['trajectory_records'] == 25
+    if cache_size == 8:
+        assert storage['retained_frames'] < data['accepted_poses']
     selected_ids = {r['frame_id'] for r in selection['insertions']}
     assert selected_ids <= {r['frame_id'] for r in data['poses']}
     assert sum(bool(r['keyframe'] and r['keyframe']['selected']) for r in data['frames']) + 1 == selection['count']

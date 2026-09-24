@@ -121,8 +121,10 @@ class Trajectory:
         reference = self._accepted_record(replacement_id)
         if reference.retired:
             raise ValueError('Cannot reanchor to a retired frame')
-        updates = {r.frame_id: self._linked(r, reference) for r in self._records.values()
-                   if r.reference_keyframe_id == frame_id}
+        # Only keyframes can own dependents. Ordinary cache expiry must not scan
+        # the complete, ever-growing trajectory for each released camera.
+        updates = ({r.frame_id: self._linked(r, reference) for r in self._records.values()
+                    if r.reference_keyframe_id == frame_id} if record.is_keyframe else {})
         updates[frame_id] = self._linked(replace(record, is_keyframe=False, retired=True), reference)
         return updates
 

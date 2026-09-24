@@ -2,9 +2,10 @@
 
 `Map.keyframes` selects accepted views for future local-map management. It is
 separate from `SLAM.keyframes`, the existing bounded recovery archive.
-Selection is enabled, deterministic, and currently **does not change estimation**:
-all accepted mapping frames remain retained, and tracking, triangulation,
-recovery candidates and BA graph membership keep their existing policies.
+Selection is enabled and deterministic. With `--tracking-cache-size N`, it affects
+estimation through
+[bounded frame storage](trajectory-records.md#bounded-feature-storage): selected
+keyframes retain measurements after ordinary tracking frames expire.
 
 ## Decision policy (version 1)
 
@@ -50,14 +51,15 @@ interval, verified/current/shared support, overlap, support ratio, median parall
 and rotation. Earlier initialization-reference decisions are in the aggregate
 `mapping_keyframes.insertions` report (the earlier processing result is preserved).
 The aggregate includes policy thresholds, schema version, selected count and
-`affects_estimation: false`. Insertion evidence describes the decision at that
+`affects_estimation` (true when bounded storage, shared local BA or guarded
+retirement is enabled). Insertion evidence describes the decision at that
 time; selected Frame references remain live through subsequent BA/culling.
 
 ## Next boundaries
 
 Selection establishes a distinct subset. [Relative trajectory anchoring and
 correction propagation](trajectory-records.md) are now implemented. [Shared-landmark local BA selection](local-map-selection.md) is available as an
-opt-in policy. [Guarded frame retirement](frame-retirement.md) is opt-in; hard storage bounds remain pending.
+opt-in policy. [Guarded frame retirement](frame-retirement.md) is opt-in; [bounded non-keyframe storage](trajectory-records.md#bounded-feature-storage) is also opt-in.
 Those changes need separate geometry and recovery checks before selected frames
 can replace the current estimator inputs. An identical trajectory in this step
 checks behavior preservation, not accuracy improvement.

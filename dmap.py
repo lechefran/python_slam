@@ -143,6 +143,38 @@ class Map:
                 removed += 1
         return removed
 
+    def evict_tracking_frames(self, cached_frames):
+        """Keep full measurements only for keyframes and bounded cached views.
+
+        Unlike redundant-keyframe retirement, cache expiry may discard useful
+        measurements. Unsupported landmarks must leave with them; trajectory
+        records remain linked to surviving keyframes for later corrections.
+        """
+        keep = set(self.keyframes.frames) | set(cached_frames)
+        expired = [frame for frame in self.frames if frame not in keep]
+        if not expired:
+            return
+        # Validate reference transforms and reciprocal slots before unlinking.
+        updates, affected = {}, set()
+        for frame in expired:
+            record = self.trajectory._records[frame.id]
+            updates.update(self.trajectory.retirement_updates(
+                frame.id, record.reference_keyframe_id))
+            for index, point in enumerate(frame.pts):
+                if point is not None:
+                    if frame not in point.frames or point.idx[point.frames.index(frame)] != index:
+                        raise ValueError('Broken reciprocal observation')
+                    affected.add(point)
+        for frame in expired:
+            for point in list(frame.pts):
+                if point is not None:
+                    point.remove_observation(frame, reason='cache_expired')
+        for point in sorted(affected, key=lambda p: p.id):
+            if len(point.frames) < 2:
+                point.delete_point('cache_expired')
+        self.trajectory._records.update(updates)
+        self.frames = [frame for frame in self.frames if frame in keep]
+
     def retire_frame(self, frame, protected=(), recent_window=64):
         """Retire only redundant measurements; preserve pose history and constraints.
 
