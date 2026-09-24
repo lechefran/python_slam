@@ -688,6 +688,8 @@ MAGSAC does not eliminate the need for a useful noise/termination threshold, and
 
 ### PERF-02 — Remove demonstrated algorithmic hot spots [P2]
 
+**2026-09-24 progress:** [Performance review](docs/performance-review.md) removes repeated BA support/history scans and batches optimized-geometry validation. Paired dashcam-prefix profiling preserves graphs/poses and reduces profiled BA work; native descriptor matching remains the largest measured cost.
+
 - **Source candidates, not measured bottleneck rankings:** per-frame detector/matcher creation; repeated inverse calibration; repeated list membership and `.index`; Python SVD loop; whole-map projection; all-observation descriptor scans; full-history graph construction and snapshot serialization.
 - [ ] Profile the corrected baseline on the required video before ranking these changes. Use Python profiling plus explicit native-stage wall timers; Python call counts alone do not explain native solver cost.
 - [ ] Cache invariant calibration/detector state; use stored observation indices and descriptor representatives; batch projection/triangulation after matching reference outputs.

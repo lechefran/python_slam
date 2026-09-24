@@ -1,7 +1,7 @@
 """Sparse map and native g2opy bundle adjustment; no display imports."""
 
 from dataclasses import dataclass, asdict
-from collections import Counter, deque
+from collections import Counter, defaultdict, deque
 import time
 
 import g2opy as g2o
@@ -97,15 +97,18 @@ class Map:
             if point.deleted or point.state not in ('candidate', 'active') or len(point.frames) != len(point.idx) or len(set(point.frames)) != len(point.frames):
                 raise ValueError('Invalid landmark observation history')
             for frame, index in zip(point.frames, point.idx):
-                if frame not in frames or frame.pts[index] is not point:
+                if (frame not in frames or not isinstance(index, (int, np.integer))
+                        or not 0 <= index < len(frame.pts) or frame.pts[index] is not point):
                     raise ValueError('Broken landmark-to-frame link')
         for frame in frames:
             if not valid_pose(frame.pose) or not np.isfinite(frame._kps).all():
                 raise ValueError('Invalid camera pose or measurements')
-            for index, point in enumerate(frame.pts):
-                if point is not None and (point not in points or frame not in point.frames
-                                         or point.idx[point.frames.index(frame)] != index):
-                    raise ValueError('Broken frame-to-landmark link')
+        # The forward pass proved that every declared observation owns its slot.
+        # Counting occupied slots now detects extra/dangling reverse links without
+        # searching the same landmark history once per image feature.
+        slot_counts = Counter(p for frame in frames for p in frame.pts if p is not None)
+        if any(p not in points or count != len(p.frames) for p, count in slot_counts.items()):
+            raise ValueError('Broken frame-to-landmark link')
 
     def cull(self, current_id, stale_after=20, max_error=5.0):
         """Retire weak stale points even when absent from the latest BA graph."""
@@ -280,35 +283,44 @@ class Map:
         self.check_integrity()
         local, result.local_map = self.select_local_frames(local_window)
         anchors = set(self.frames[:2])
-        pool = (self.points if self.local_map_policy == 'temporal' else
-                {p for f in local for p in f.pts if p is not None and not p.deleted})
-        points = [p for p in pool if len(p.frames) >= 2 and any(f in local for f in p.frames)
+        # Reciprocal links were checked above: walking only selected frame slots
+        # yields exactly the same candidate set as scanning the entire map. Count
+        # local support once and reuse it for deterministic point ranking.
+        local_support = Counter(p for frame in local for p in frame.pts if p is not None)
+        points = [p for p in local_support if len(p.frames) >= 2
                   and (not self.landmark_maturity or p.state == 'active')]
         if self.local_map_policy == 'shared':
-            # Preserve the current camera's constraints before filling the point
-            # budget with landmarks from covisible keyframes only.
-            current = self.frames[-1]
-            points.sort(key=lambda p: (current not in p.frames, -sum(f in local for f in p.frames),
+            current_points = set(self.frames[-1].pts)
+            points.sort(key=lambda p: (p not in current_points, -local_support[p],
                                        -p.frames[-1].id, p.id))
         else:
-            points.sort(key=lambda p: (-sum(f in local for f in p.frames), -p.frames[-1].id, p.id))
+            points.sort(key=lambda p: (-local_support[p], -p.frames[-1].id, p.id))
         points = points[:max_points]
         if not points:
             result.reason = 'no supported local landmarks'
             return result
         observations = {}
         for point in points:
-            pairs = list(zip(point.frames, point.idx))
-            # Retain local measurements and at most two old boundary observations;
-            # unrelated historical cameras never enter this optimization graph.
-            boundary = [(f, i) for f, i in pairs if f not in local][:2]
-            observations[point] = [(f, i) for f, i in pairs if f in local] + boundary
-        graph_frames = sorted({f for pairs in observations.values() for f, _ in pairs}, key=lambda f: f.id)
+            # Partition once, preserving observation order and the same earliest
+            # two fixed boundary measurements used by the validated baseline.
+            local_pairs, boundary = [], []
+            for frame, index in zip(point.frames, point.idx):
+                if frame in local:
+                    local_pairs.append((frame, index))
+                elif len(boundary) < 2:
+                    boundary.append((frame, index))
+            observations[point] = local_pairs + boundary
+        # Reuse camera membership for support counts and batched depth checks.
+        camera_points = defaultdict(list)
+        for point, pairs in observations.items():
+            for frame, _ in pairs:
+                camera_points[frame].append(point)
+        graph_frames = sorted(camera_points, key=lambda f: f.id)
         fixed = {f for f in graph_frames if f in anchors or f not in local}
         result.local_map.update(fixed_frame_ids=sorted(f.id for f in fixed),
                                 graph_cameras=len(graph_frames), graph_points=len(points),
                                 point_budget=max_points)
-        support = {f: sum(f is obs for pairs in observations.values() for obs, _ in pairs) for f in graph_frames}
+        support = {frame: len(points) for frame, points in camera_points.items()}
         if any(support[f] < 6 for f in graph_frames if f not in fixed):
             result.reason = 'insufficient edges for a free camera'
             return result
@@ -383,8 +395,13 @@ class Map:
                      and all(valid_pose(pose) for pose in new_poses.values())
                      and all(np.isfinite(p).all() for p in new_points.values())
                      and all(np.allclose(new_poses[f], f.pose, atol=1e-8) for f in fixed))
-            for point, pairs in observations.items():
-                valid = valid and all(project(f.k, new_poses[f], [new_points[point]])[2][0] for f, _ in pairs)
+            if valid:
+                # Check the same (camera, landmark) observations in batches. The
+                # projection helper keeps its finite-coordinate/positive-depth
+                # gates; no pixel residual or acceptance threshold changes.
+                valid = all(project(frame.k, new_poses[frame],
+                                    [new_points[p] for p in camera_points[frame]])[2].all()
+                            for frame in graph_frames)
             if not valid:
                 result.status, result.reason = 'rejected', 'invalid or worsening optimizer result'
             else:

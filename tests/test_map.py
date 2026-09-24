@@ -74,3 +74,34 @@ def test_empty_optimizer_and_failed_native_result_leave_state(scene, monkeypatch
     for frame, expected in zip(mapping.frames, before):
         np.testing.assert_array_equal(frame.pose, expected)
     assert dmap.Map().optimize().status == 'skipped'
+
+
+@pytest.mark.parametrize('corruption', [
+    'duplicate_slot', 'dangling_landmark', 'missing_reverse', 'missing_slot',
+    'negative_index', 'out_of_range_index', 'duplicate_observation', 'swapped_slots',
+])
+def test_integrity_rejects_corrupt_links_after_linearization(scene, corruption):
+    mapping, _, _ = scene
+    point, frame = mapping.points[-1], mapping.frames[0]
+    # Each case violates a different ownership invariant. In particular, extra
+    # slots must be rejected even when every declared forward link is valid.
+    if corruption == 'duplicate_slot':
+        frame.pts.append(point)
+    elif corruption == 'dangling_landmark':
+        mapping.points.remove(point)
+    elif corruption == 'missing_reverse':
+        point.frames.pop(0)
+        point.idx.pop(0)
+    elif corruption == 'missing_slot':
+        frame.pts[-1] = None
+    elif corruption == 'negative_index':
+        point.idx[0] = -1
+    elif corruption == 'out_of_range_index':
+        point.idx[0] = len(frame.pts)
+    elif corruption == 'duplicate_observation':
+        point.frames.append(frame)
+        point.idx.append(len(frame.pts) - 1)
+    elif corruption == 'swapped_slots':
+        frame.pts[0], frame.pts[-1] = frame.pts[-1], frame.pts[0]
+    with pytest.raises(ValueError):
+        mapping.check_integrity()
